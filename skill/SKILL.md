@@ -61,6 +61,12 @@ whatever data it needs by itself.
      Do not Delete the ChatGPT connector — the address did not change)
    A ChatGPT-side 401 after a sent message is different: repair then, do not
    treat it as permission to skip this gate next time.
+10. **Checkpoint, not a second state machine.** Before compaction, handoff, or a
+    conversation switch, append a compact task-bound checkpoint. It is a recovery
+    hint only; the project Controller remains the sole business-state authority.
+11. **Evidence before DONE.** A ChatGPT DONE is not sufficient by itself. Record
+    the execution and tests, append the reviewed DONE checkpoint, then run `c2c gate`.
+    A failed gate must be reported as BLOCKED, never promoted to completion.
 
 ## In-app browser (ChatGPT)
 
@@ -121,8 +127,8 @@ that close the tab, hide the window, or stall on the settings page.
 
 ## Locations
 
-- The codex-with-chatgpt checkout lives at: `/Users/xiaoduo_/Codex_With_ChatGPT`
-- CLI: run `node /Users/xiaoduo_/Codex_With_ChatGPT/bin/c2c.js <command>`
+- The codex-with-chatgpt checkout lives at: `__C2C_CHECKOUT__`
+- CLI: run `node __C2C_CHECKOUT__/bin/c2c.js <command>`
   (or `c2c <command>` if globally linked). All commands support `--json` for parsing.
 - If the checkout has no `node_modules` or no `dist/`, first run
   `corepack pnpm install && corepack pnpm build` inside it.
@@ -251,7 +257,8 @@ chat per task or per Codex session.
   conversation URL from the iab address bar (visible UI state only)
   and run `c2c session set -w <ws> --url <url> --title "C2C <workspace name>"`.
 - **Update it**: after each EXECUTED/DONE, run
-  `c2c session set -w <ws> --task <id> --iteration <n> --state <STATE>`.
+   `c2c session set -w <ws> --task <id> --iteration <n> --state <STATE>` and append
+   `c2c checkpoint -w <ws> --task <id> --iteration <n> --state <STATE> --summary "..." --next "..."`.
 - **Switch it** ONLY when (a) the user explicitly asks for a new chat, or
   (b) the current chat has become so long it visibly lags. When switching:
   1. Same iab tab: `goto` `https://chatgpt.com/`, send the boot prompt.
@@ -338,7 +345,10 @@ Please independently inspect the workspace and current git diff through MCP.
    DONE / PLAN (next iteration) / BLOCKED.
 8. Loop. Respect maxIterations (`.c2c.json`, default 12). At the limit, pause and ask
    the user: "已完成 12 轮协作，仍有未解决问题，是否继续？"
-9. On DONE: summarize the result to the user in plain language.
+9. On DONE: append a DONE checkpoint, run
+   `c2c gate -w <ws> --task <id> --iteration <n> --json`, and only summarize
+   completion when it returns `ok: true`. This checks local evidence completeness;
+   it does not change or replace the project's authoritative business state.
 10. On BLOCKED: read ChatGPT's reason, fix what you can, or surface the single
     decision the user must make.
 

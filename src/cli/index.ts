@@ -8,7 +8,7 @@ import { findLiveBridge, probeBridge, readRuntimeState, type RuntimeState } from
 import { adminFetch, ensureBridge, stopBridge } from "../process/daemon.js";
 import { Workspace } from "../workspace/manager.js";
 import { AuthStore } from "../auth/store.js";
-import { appendExecutionRecord } from "../execution/records.js";
+import { appendCheckpointRecord, appendExecutionRecord, completionEvidence } from "../execution/records.js";
 import { detectTunnelBinaries } from "../tunnel/detect.js";
 import {
   chooseQuickTunnel,
@@ -38,6 +38,7 @@ import {
   normalizePublicUrl,
   readLastEndpoint,
   reclaimUserMessage,
+  shouldRestorePublicConnection,
   writeLastEndpoint,
   type LastEndpoint,
 } from "../config/endpoint.js";
@@ -190,11 +191,18 @@ program
   .description("Start (or reuse) the bridge for this workspace")
   .option("-w, --workspace <path>", "workspace root (defaults to current directory)")
   .option("--tunnel", "also establish the secure public connection", false)
+  .option("--local-only", "do not restore a previously configured public connection", false)
   .option("--json", "machine-readable output", false)
-  .action(async (opts: { workspace?: string; tunnel: boolean; json: boolean }) => {
+  .action(async (opts: { workspace?: string; tunnel: boolean; localOnly: boolean; json: boolean }) => {
     const root = resolveWorkspace(opts.workspace);
     try {
-      const { runtime, info, mcpUrl } = await ensureBridgeAndTunnel(root, { tunnel: opts.tunnel });
+      const workspace = new Workspace(root);
+      const tunnel = shouldRestorePublicConnection({
+        requested: opts.tunnel,
+        localOnly: opts.localOnly,
+        previous: readLastEndpoint(workspace.id),
+      });
+      const { runtime, info, mcpUrl } = await ensureBridgeAndTunnel(root, { tunnel });
       const connectorName = mcpUrl
         ? persistWorkspaceEndpoint({
             workspaceId: info.workspaceId,
@@ -303,12 +311,19 @@ program
   .description("Restart the bridge for this workspace")
   .option("-w, --workspace <path>")
   .option("--tunnel", "re-establish the secure public connection", false)
-  .action(async (opts: { workspace?: string; tunnel: boolean }) => {
+  .option("--local-only", "restart locally without restoring the configured public connection", false)
+  .action(async (opts: { workspace?: string; tunnel: boolean; localOnly: boolean }) => {
     const root = resolveWorkspace(opts.workspace);
     await stopBridge(root);
     await new Promise((resolve) => setTimeout(resolve, 500));
     try {
-      const { info, mcpUrl } = await ensureBridgeAndTunnel(root, { tunnel: opts.tunnel });
+      const workspace = new Workspace(root);
+      const tunnel = shouldRestorePublicConnection({
+        requested: opts.tunnel,
+        localOnly: opts.localOnly,
+        previous: readLastEndpoint(workspace.id),
+      });
+      const { info, mcpUrl } = await ensureBridgeAndTunnel(root, { tunnel });
       check(`Bridge 已重启（${info.workspaceName}）`);
       if (mcpUrl) check(`安全连接已建立`);
     } catch (error) {
@@ -902,6 +917,46 @@ program
       check("已记录执行摘要");
     }
   );
+
+program
+  .command("checkpoint", { hidden: true })
+  .description("Append a compact, task-bound recovery checkpoint")
+  .option("-w, --workspace <path>")
+  .requiredOption("--task <id>")
+  .requiredOption("--iteration <n>")
+  .requiredOption("--state <state>")
+  .requiredOption("--summary <text>")
+  .requiredOption("--next <step>")
+  .option("--known-issues <items>", "semicolon-separated bounded issue summaries", "")
+  .action((opts: { workspace?: string; task: string; iteration: string; state: string; summary: string; next: string; knownIssues: string }) => {
+    const workspace = new Workspace(resolveWorkspace(opts.workspace));
+    appendCheckpointRecord(workspace.id, {
+      kind: "checkpoint",
+      taskId: opts.task,
+      iteration: parseInt(opts.iteration, 10),
+      state: opts.state,
+      summary: opts.summary,
+      knownIssues: opts.knownIssues.split(";").map((item) => item.trim()).filter(Boolean),
+      nextExpectedStep: opts.next,
+      timestamp: new Date().toISOString(),
+    });
+    check("已记录可恢复检查点");
+  });
+
+program
+  .command("gate", { hidden: true })
+  .description("Fail closed on incomplete local DONE evidence without changing business state")
+  .option("-w, --workspace <path>")
+  .requiredOption("--task <id>")
+  .option("--iteration <n>")
+  .option("--json", "machine-readable output", false)
+  .action((opts: { workspace?: string; task: string; iteration?: string; json: boolean }) => {
+    const workspace = new Workspace(resolveWorkspace(opts.workspace));
+    const result = completionEvidence(workspace.id, opts.task, opts.iteration === undefined ? undefined : parseInt(opts.iteration, 10));
+    if (opts.json) say(JSON.stringify({ ok: result.pass, enforcement: "c2c-protocol-fail-closed", authority: "not-business-state", ...result }));
+    else say(result.pass ? "DONE 证据完整（仅本地审计，不改变业务状态）" : `BLOCKED：证据不完整 ${JSON.stringify(result.checks)}`);
+    if (!result.pass) process.exitCode = 2;
+  });
 
 const tunnelCmd = program.command("tunnel").description("Choose or inspect the public connection for this workspace");
 

@@ -99,6 +99,12 @@ Before sending EXECUTED, Codex records the iteration:
 `c2c record --task c2c_f81a --iteration 1 --changed-files ... --tests ... --exit-status ok`
 so ChatGPT can read it via the `execution_summary` / `test_status` tools.
 
+Before compaction, handoff, or switching conversations, Codex appends a bounded
+task checkpoint with `c2c checkpoint`. It contains only the protocol cursor,
+short summary, known issues, and next expected step. `execution_summary` can
+filter these records by `task_id`, so a resumed reviewer does not mix tasks.
+This append-only audit trail is a recovery hint, not a business state machine.
+
 ### DONE / BLOCKED (ChatGPT → Codex)
 
 ```
@@ -123,6 +129,14 @@ REASON:
 NEEDS:
 ...
 ```
+
+After ChatGPT returns DONE, Codex records the DONE checkpoint and runs
+`c2c gate --task ... --iteration ... --json`. The gate requires a successful
+execution record, a non-empty test summary, and the matching DONE checkpoint.
+It is a mandatory fail-closed C2C protocol guard: missing evidence returns a
+non-zero exit and Codex must report BLOCKED. It still cannot change Controller
+state or substitute for deployment, billing, provider, or production acceptance
+gates; it controls only whether C2C may claim DONE.
 
 ### HANDOFF (Codex → new ChatGPT conversation)
 

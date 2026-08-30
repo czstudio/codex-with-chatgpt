@@ -27,7 +27,7 @@ Agent（Codex），然后去倒杯咖啡：
 
 1. 环境自检：需要 git 和 Node.js ≥ 20，缺什么就自动安装
   （macOS 用 Homebrew，Windows 用 winget），同时安装 cloudflared。
-2. 下载：把 https://github.com/XiaoDuoYa/codex-with-chatgpt 克隆到
+2. 下载：把 https://github.com/czstudio/codex-with-chatgpt-pro 克隆到
    ~/codex-with-chatgpt（已存在就 git pull 更新）。
 3. 构建：在该目录里执行 corepack pnpm install 和 corepack pnpm build。
 4. 安装 Skill：把仓库里的 skill/SKILL.md 复制到
@@ -46,6 +46,23 @@ Agent（Codex），然后去倒杯咖啡：
 无需任何操作；也可以随时对 Codex 说"更新 Codex with ChatGPT"。
 
 ## 安装 → 配置 → 使用（手动版）
+
+### 一键安装
+
+macOS（已安装 Homebrew）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/czstudio/codex-with-chatgpt-pro/main/scripts/install.sh | bash
+```
+
+Windows 10/11（PowerShell，使用系统自带 winget）：
+
+```powershell
+irm https://raw.githubusercontent.com/czstudio/codex-with-chatgpt-pro/main/scripts/install.ps1 | iex
+```
+
+安装器会检查依赖、构建桥、安装 Codex Skill，并配置可跨重启保留的应用状态目录。
+它不会上传你的项目，也不会把 ChatGPT 或 Cloudflare 凭据写进项目。
 
 1. 安装 Codex Skill：把 `skill/` 复制到 `~/.codex/skills/codex-with-chatgpt/`。
 2. 对 Codex 说：**"使用 Codex with ChatGPT 完成首次配置。"**

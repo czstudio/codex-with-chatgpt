@@ -6,7 +6,30 @@ import {
   mcpUrlFromPublic,
   normalizePublicUrl,
   reclaimUserMessage,
+  shouldRestorePublicConnection,
 } from "../src/config/endpoint.js";
+
+describe("shouldRestorePublicConnection", () => {
+  const previous = {
+    workspaceId: "workspace-1",
+    port: 9317,
+    publicUrl: "https://bridge.example.com",
+    mcpUrl: "https://bridge.example.com/mcp",
+    savedAt: new Date(0).toISOString(),
+  };
+
+  it("restores a saved public endpoint on ordinary start and restart", () => {
+    expect(shouldRestorePublicConnection({ requested: false, localOnly: false, previous })).toBe(true);
+  });
+
+  it("supports an explicit local-only diagnostic start", () => {
+    expect(shouldRestorePublicConnection({ requested: true, localOnly: true, previous })).toBe(false);
+  });
+
+  it("does not create a public connection for a new local workspace", () => {
+    expect(shouldRestorePublicConnection({ requested: false, localOnly: false, previous: null })).toBe(false);
+  });
+});
 
 describe("connectorAction", () => {
   it("creates on the first successful URL", () => {

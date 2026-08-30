@@ -3,7 +3,7 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { startBridge, type Bridge } from "../src/bridge/server.js";
-import { appendExecutionRecord } from "../src/execution/records.js";
+import { appendCheckpointRecord, appendExecutionRecord } from "../src/execution/records.js";
 import { makeTmpDir, cleanup, write, makeGitRepo, git, isolateStateDir } from "./helpers.js";
 
 let root: string;
@@ -171,6 +171,20 @@ describe("MCP tools over Streamable HTTP", () => {
     );
     expect(status.available).toBe(true);
     expect(status.tests).toBe("27 passed");
+  });
+
+  it("execution_summary exposes a bounded task-specific recovery checkpoint", async () => {
+    appendCheckpointRecord(bridge.workspace.id, {
+      kind: "checkpoint", taskId: "c2c_recovery", iteration: 2, state: "BLOCKED",
+      summary: "connector interrupted", knownIssues: ["reauthorize"], nextExpectedStep: "retry review",
+      timestamp: new Date().toISOString(),
+    });
+    const summary = jsonOf<{ authority: string; records: { taskId: string }[]; latestCheckpoint: { state: string } }>(
+      await client.callTool({ name: "execution_summary", arguments: { task_id: "c2c_recovery" } })
+    );
+    expect(summary.authority).toBe("local-audit-hint-only");
+    expect(summary.records).toHaveLength(1);
+    expect(summary.latestCheckpoint.state).toBe("BLOCKED");
   });
 
   it("enforces scopes per tool", async () => {

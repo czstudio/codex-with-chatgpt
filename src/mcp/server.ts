@@ -4,7 +4,7 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { Workspace, WorkspaceError } from "../workspace/manager.js";
 import { searchWorkspace } from "../workspace/search.js";
 import { gitDiff, gitInfo, gitStatus, type DiffMode } from "../workspace/git.js";
-import { latestExecutionRecord, readExecutionRecords } from "../execution/records.js";
+import { latestCheckpointRecord, latestExecutionRecord, readAuditRecords } from "../execution/records.js";
 import type { Logger } from "../logger/index.js";
 import { PRODUCT_NAME, VERSION } from "../version.js";
 
@@ -259,13 +259,18 @@ export function createMcpServer(ctx: McpContext): McpServer {
         `tests and exit status. Use it after Codex reports EXECUTED. ${UNTRUSTED_NOTE}`,
       inputSchema: {
         limit: z.number().int().min(1).max(50).default(5),
+        task_id: z.string().min(1).max(200).optional(),
       },
       annotations: { readOnlyHint: true },
     },
     async (args, extra) => {
       const denied = requireScope(extra.authInfo, "execution.read");
       if (denied) return denied;
-      return ok({ records: readExecutionRecords(workspace.id, args.limit) });
+      return ok({
+        authority: "local-audit-hint-only",
+        records: readAuditRecords(workspace.id, args.limit, args.task_id),
+        latestCheckpoint: latestCheckpointRecord(workspace.id, args.task_id),
+      });
     }
   );
 

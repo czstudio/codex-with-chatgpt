@@ -41,6 +41,20 @@ export function mcpUrlFromPublic(publicUrl: string | null | undefined): string |
   return `${base}/mcp`;
 }
 
+/**
+ * A workspace with a saved public endpoint is expected to remain reachable.
+ * `start` and `restart` therefore restore its tunnel by default; callers can
+ * still opt into a deliberately local-only diagnostic start.
+ */
+export function shouldRestorePublicConnection(opts: {
+  requested: boolean;
+  localOnly: boolean;
+  previous: LastEndpoint | null;
+}): boolean {
+  if (opts.localOnly) return false;
+  return opts.requested || Boolean(opts.previous?.publicUrl && opts.previous.mcpUrl);
+}
+
 /** What the Skill should do to THIS workspace's ChatGPT connector.
  *  `update` means the public address changed: Delete the old connector
  *  in ChatGPT, then create it again. Never click Reconnect (the old

@@ -65,7 +65,7 @@ I am a non-technical user — do everything yourself:
 1. Check the environment: git and Node.js >= 20 must be available. Install
    anything missing yourself (macOS: Homebrew, Windows: winget). Also install
    cloudflared.
-2. Download: clone https://github.com/XiaoDuoYa/codex-with-chatgpt into
+2. Download: clone https://github.com/czstudio/codex-with-chatgpt-pro into
    ~/codex-with-chatgpt (if it already exists, git pull to update).
 3. Build: inside that folder run `corepack pnpm install` then `corepack pnpm build`.
 4. Install the Skill: copy skill/SKILL.md to
@@ -93,6 +93,24 @@ anytime. / Skill 每天自动检查一次 GitHub，有新版本会自动更新�
 [README.zh-CN.md](README.zh-CN.md)。*
 
 ## Install → Setup → Use (manual)
+
+### One-command installer
+
+macOS (Homebrew installed):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/czstudio/codex-with-chatgpt-pro/main/scripts/install.sh | bash
+```
+
+Windows 10/11 (PowerShell; uses winget):
+
+```powershell
+irm https://raw.githubusercontent.com/czstudio/codex-with-chatgpt-pro/main/scripts/install.ps1 | iex
+```
+
+The installer checks prerequisites, builds the bridge, installs the Codex Skill,
+and configures its persistent app-state directory. It never uploads a repository
+or stores ChatGPT/Cloudflare credentials in the project.
 
 1. Install the Codex Skill: copy `skill/` to `~/.codex/skills/codex-with-chatgpt/`.
 2. Tell Codex: **"Set up Codex with ChatGPT."** (中文: "使用 Codex with ChatGPT 完成首次配置。")
@@ -166,6 +184,11 @@ Credentials stay in the OS app state directory, not in the project.
 - **Independent review**: after Codex executes, ChatGPT inspects the actual
   git diff and test records through MCP — it never trusts "all tests passed"
   claims blindly.
+- **Recoverable task cursor**: compact task-bound checkpoints preserve the
+  current state, known issues, and next step across compaction or chat handoff.
+- **Fail-closed evidence gate**: C2C cannot claim DONE without matching execution,
+  tests, and review checkpoint evidence. It returns non-zero when incomplete and
+  remains local protocol enforcement—not authoritative project state.
 
 ## Security model (short version)
 
@@ -190,7 +213,7 @@ Full threat model: [docs/security.md](docs/security.md)
 ```bash
 pnpm install
 pnpm build          # -> dist/, exposes the `c2c` bin
-pnpm test           # vitest: 76 tests (path security, OAuth, pairing, MCP e2e)
+pnpm test           # path security, OAuth, pairing, recovery and MCP e2e
 
 c2c setup           # bridge + tunnel + pairing code, all in one
 c2c sandbox-allow   # whitelist the settings dir in Codex (macOS + Windows)

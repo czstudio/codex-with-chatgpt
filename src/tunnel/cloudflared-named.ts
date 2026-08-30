@@ -77,6 +77,8 @@ export class CloudflaredNamedTunnel implements TunnelProvider {
         [
           "tunnel",
           "--no-autoupdate",
+          "--protocol",
+          "http2",
           "--url",
           `http://127.0.0.1:${localPort}`,
           "run",
