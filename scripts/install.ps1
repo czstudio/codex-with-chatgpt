@@ -38,9 +38,17 @@ if (Test-Path (Join-Path $Checkout ".git")) {
   git clone $RepoUrl $Checkout
 }
 
-corepack enable
-corepack pnpm --dir $Checkout install --frozen-lockfile
-corepack pnpm --dir $Checkout build
+if (Get-Command corepack -ErrorAction SilentlyContinue) {
+  corepack enable
+  corepack pnpm --dir $Checkout install --frozen-lockfile
+  corepack pnpm --dir $Checkout build
+} elseif (Get-Command pnpm -ErrorAction SilentlyContinue) {
+  pnpm --dir $Checkout install --frozen-lockfile
+  pnpm --dir $Checkout build
+} else {
+  npx --yes pnpm@11.24.0 --dir $Checkout install --frozen-lockfile
+  npx --yes pnpm@11.24.0 --dir $Checkout build
+}
 
 New-Item -ItemType Directory -Force -Path $SkillDir | Out-Null
 $Skill = Get-Content -Raw (Join-Path $Checkout "skill\SKILL.md")

@@ -38,9 +38,16 @@ else
   git clone "$REPO_URL" "$C2C_CHECKOUT"
 fi
 
-corepack enable
-corepack pnpm --dir "$C2C_CHECKOUT" install --frozen-lockfile
-corepack pnpm --dir "$C2C_CHECKOUT" build
+if need corepack; then
+  corepack enable
+  PNPM=(corepack pnpm)
+elif need pnpm; then
+  PNPM=(pnpm)
+else
+  PNPM=(npx --yes pnpm@11.24.0)
+fi
+"${PNPM[@]}" --dir "$C2C_CHECKOUT" install --frozen-lockfile
+"${PNPM[@]}" --dir "$C2C_CHECKOUT" build
 
 mkdir -p "$SKILL_DIR"
 sed "s|__C2C_CHECKOUT__|$C2C_CHECKOUT|g" "$C2C_CHECKOUT/skill/SKILL.md" > "$SKILL_DIR/SKILL.md"
