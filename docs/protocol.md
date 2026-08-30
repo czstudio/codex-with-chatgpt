@@ -133,6 +133,10 @@ NEEDS:
 After ChatGPT returns DONE, Codex records the DONE checkpoint and runs
 `c2c gate --task ... --iteration ... --json`. The gate requires a successful
 execution record, a non-empty test summary, and the matching DONE checkpoint.
+Records carry an explicit local-audit-only authority marker and schema version.
+Malformed, unknown-schema, conflicting, oversized, or credential-like records
+make integrity false and keep the gate BLOCKED; valid lines may still be shown
+for recovery, but corruption is never silently promoted to completion.
 It is a mandatory fail-closed C2C protocol guard: missing evidence returns a
 non-zero exit and Codex must report BLOCKED. It still cannot change Controller
 state or substitute for deployment, billing, provider, or production acceptance

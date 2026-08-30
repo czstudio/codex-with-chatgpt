@@ -188,7 +188,8 @@ Credentials stay in the OS app state directory, not in the project.
   current state, known issues, and next step across compaction or chat handoff.
 - **Fail-closed evidence gate**: C2C cannot claim DONE without matching execution,
   tests, and review checkpoint evidence. It returns non-zero when incomplete and
-  remains local protocol enforcement—not authoritative project state.
+  also blocks on malformed, conflicting, unknown-schema, or oversized audit data.
+  It remains local protocol enforcement—not authoritative project state.
 
 ## Security model (short version)
 

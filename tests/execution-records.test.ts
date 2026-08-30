@@ -6,6 +6,7 @@ import {
   appendExecutionRecord,
   completionEvidence,
   latestCheckpointRecord,
+  readAuditLog,
   readAuditRecords,
   readExecutionRecords,
 } from "../src/execution/records.js";
@@ -67,7 +68,7 @@ describe("task-bound execution audit", () => {
     })).toThrow(/control/);
   });
 
-  it("recovers valid records around a corrupt or interrupted append", () => {
+  it("surfaces valid records around an interruption but fails the completion gate closed", () => {
     appendCheckpointRecord("ws-corrupt", {
       kind: "checkpoint", taskId: "task-a", iteration: 1, state: "EXECUTED",
       summary: "before interruption", knownIssues: [], nextExpectedStep: "review",
@@ -75,14 +76,78 @@ describe("task-bound execution audit", () => {
     });
     const stateDir = process.env.C2C_STATE_DIR!;
     fs.appendFileSync(path.join(stateDir, "executions", "ws-corrupt.jsonl"), "{interrupted\n");
-    appendCheckpointRecord("ws-corrupt", {
+    const log = readAuditLog("ws-corrupt", "task-a");
+    expect(log.records).toHaveLength(1);
+    expect(log.integrity.ok).toBe(false);
+    expect(log.integrity.corruptLines).toEqual([2]);
+    expect(completionEvidence("ws-corrupt", "task-a", 1).pass).toBe(false);
+    expect(() => appendCheckpointRecord("ws-corrupt", {
       kind: "checkpoint", taskId: "task-a", iteration: 2, state: "DONE",
-      summary: "recovered", knownIssues: [], nextExpectedStep: "report",
+      summary: "must not hide corruption", knownIssues: [], nextExpectedStep: "repair",
       timestamp: "2026-08-30T00:01:00Z",
-    });
+    })).toThrow(/integrity failure/);
+  });
 
-    const records = readAuditRecords("ws-corrupt", 10, "task-a");
-    expect(records).toHaveLength(2);
-    expect(latestCheckpointRecord("ws-corrupt", "task-a")?.summary).toBe("recovered");
+  it("is idempotent for identical records and rejects conflicting identities", () => {
+    const record = {
+      taskId: "task-a", iteration: 1, changedFiles: 1, tests: "1 passed",
+      exitStatus: "ok", timestamp: "2026-08-30T00:00:00Z",
+    } as const;
+    appendExecutionRecord("ws", record);
+    appendExecutionRecord("ws", { ...record, timestamp: "2026-08-30T00:01:00Z" });
+    expect(readAuditRecords("ws", 10)).toHaveLength(1);
+    expect(() => appendExecutionRecord("ws", { ...record, tests: "2 passed" })).toThrow(/conflicting/);
+  });
+
+  it("does not borrow DONE evidence across iterations or tasks", () => {
+    appendExecutionRecord("ws", {
+      taskId: "task-a", iteration: 1, changedFiles: 1, tests: "1 passed", exitStatus: "ok",
+      timestamp: "2026-08-30T00:00:00Z",
+    });
+    appendCheckpointRecord("ws", {
+      kind: "checkpoint", taskId: "task-a", iteration: 2, state: "DONE", summary: "wrong iteration",
+      knownIssues: [], nextExpectedStep: "report", timestamp: "2026-08-30T00:01:00Z",
+    });
+    appendCheckpointRecord("ws", {
+      kind: "checkpoint", taskId: "task-b", iteration: 1, state: "DONE", summary: "wrong task",
+      knownIssues: [], nextExpectedStep: "report", timestamp: "2026-08-30T00:02:00Z",
+    });
+    expect(completionEvidence("ws", "task-a").pass).toBe(false);
+    expect(completionEvidence("ws", "task-b", 1).pass).toBe(false);
+  });
+
+  it("rejects credential-like content and unknown schemas", () => {
+    expect(() => appendCheckpointRecord("ws", {
+      kind: "checkpoint", taskId: "task-a", iteration: 1, state: "BLOCKED",
+      summary: "token=supersecretvalue", knownIssues: [], nextExpectedStep: "rotate",
+      timestamp: "2026-08-30T00:00:00Z",
+    })).toThrow(/credential-like/);
+    const stateDir = process.env.C2C_STATE_DIR!;
+    const dir = path.join(stateDir, "executions");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "ws-unknown.jsonl"), JSON.stringify({
+      schemaVersion: 99, authority: "local-audit-hint-only", kind: "checkpoint", taskId: "a",
+      iteration: 1, state: "DONE", summary: "x", knownIssues: [], nextExpectedStep: "x", timestamp: "x",
+    }) + "\n");
+    expect(readAuditLog("ws-unknown").integrity.ok).toBe(false);
+    expect(completionEvidence("ws-unknown", "a", 1).pass).toBe(false);
+  });
+
+  it("deduplicates concurrent-equivalent lines and blocks concurrent conflicts", () => {
+    const stateDir = process.env.C2C_STATE_DIR!;
+    const dir = path.join(stateDir, "executions");
+    fs.mkdirSync(dir, { recursive: true });
+    const base = {
+      schemaVersion: 1, authority: "local-audit-hint-only", kind: "execution", taskId: "task-a",
+      iteration: 1, changedFiles: 1, tests: "1 passed", exitStatus: "ok",
+      timestamp: "2026-08-30T00:00:00Z",
+    };
+    const file = path.join(dir, "ws-race.jsonl");
+    fs.writeFileSync(file, `${JSON.stringify(base)}\n${JSON.stringify({ ...base, timestamp: "2026-08-30T00:00:01Z" })}\n`);
+    expect(readAuditLog("ws-race").records).toHaveLength(1);
+    expect(readAuditLog("ws-race").integrity.ok).toBe(true);
+    fs.appendFileSync(file, `${JSON.stringify({ ...base, tests: "different" })}\n`);
+    expect(readAuditLog("ws-race").integrity.ok).toBe(false);
+    expect(completionEvidence("ws-race", "task-a", 1).pass).toBe(false);
   });
 });
