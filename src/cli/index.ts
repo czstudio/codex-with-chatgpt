@@ -28,6 +28,7 @@ import {
 import { Logger } from "../logger/index.js";
 import { getStateDir } from "../config/paths.js";
 import { ensureSandboxAllowlist, getCodexConfigPath, isStateDirAllowlisted } from "../config/sandbox-allow.js";
+import { TaskInbox, TaskInboxError, armTask } from "../inbox/task-inbox.js";
 import {
   CHATGPT_CREATE_CONNECTOR_URL,
   CHATGPT_DEVELOPER_MODE_URL,
@@ -721,6 +722,102 @@ program
       say(`Workspace：${data.name}（${data.workspaceId}）`);
       say(`类型：${data.projectType}  语言：${data.languages.join(", ") || "-"}`);
       say(`路径：${data.root}`);
+    }
+  });
+
+// ---------------------------------------------------------------- task inbox
+
+const taskCmd = program.command("task").description("Arm and inspect the local durable task inbox");
+
+taskCmd
+  .command("arm")
+  .description("Explicitly arm one approved local task (arming never dispatches it)")
+  .argument("[taskId]", "local task identifier")
+  .option("--task-id <id>", "local task identifier")
+  .option("--task <id>", "alias for --task-id")
+  .option("-w, --workspace <path>", "workspace root (defaults to current directory)")
+  .option("--operation <operation>", "approved operation", "codex_turn")
+  .option("--attempt <n>", "attempt fence (only 1 is accepted)", "1")
+  .option("--arm-id <id>", "stable arm identifier")
+  .option("--idempotency-key <key>", "stable idempotency key")
+  .option("--json", "machine-readable output", false)
+  .action(
+    (
+      argumentTaskId: string | undefined,
+      opts: {
+        taskId?: string;
+        task?: string;
+        workspace?: string;
+        operation: string;
+        attempt: string;
+        armId?: string;
+        idempotencyKey?: string;
+        json: boolean;
+      }
+    ) => {
+      try {
+        const workspace = new Workspace(resolveWorkspace(opts.workspace));
+        const taskId = opts.taskId ?? opts.task ?? argumentTaskId;
+        if (!taskId) throw new TaskInboxError("INVALID_TASK_ID", "task id is required");
+        const parsedAttempt = Number.parseInt(opts.attempt, 10);
+        if (!Number.isInteger(parsedAttempt)) throw new TaskInboxError("ATTEMPT_INVALID", "attempt must be an integer");
+        const task = armTask({
+          taskId,
+          workspaceId: workspace.id,
+          operation: opts.operation,
+          attempt: parsedAttempt,
+          armId: opts.armId,
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (opts.json) say(JSON.stringify({ ok: true, workspaceId: workspace.id, task }));
+        else check(`任务已 arm（${task.taskId}，尚未 dispatch）`);
+      } catch (error) {
+        handleCliError(error, opts.json);
+      }
+    }
+  );
+
+taskCmd
+  .command("status")
+  .description("Read local durable task state; this command never dispatches")
+  .argument("[taskId]", "local task identifier")
+  .option("-w, --workspace <path>", "workspace root (defaults to current directory)")
+  .option("--json", "machine-readable output", false)
+  .action((taskId: string | undefined, opts: { workspace?: string; json: boolean }) => {
+    try {
+      const workspace = new Workspace(resolveWorkspace(opts.workspace));
+      const inbox = new TaskInbox(workspace.id);
+      if (taskId) {
+        const payload = { ok: true, workspaceId: workspace.id, task: inbox.load(taskId) };
+        if (opts.json) say(JSON.stringify(payload));
+        else say(`${payload.task.taskId}：${payload.task.status}`);
+      } else {
+        const payload = { ok: true, workspaceId: workspace.id, tasks: inbox.list() };
+        if (opts.json) say(JSON.stringify(payload));
+        else say(payload.tasks.length ? payload.tasks.map((task) => `${task.taskId}：${task.status}`).join("\n") : "暂无本地任务。");
+      }
+    } catch (error) {
+      handleCliError(error, opts.json);
+    }
+  });
+
+taskCmd
+  .command("cancel")
+  .description("Cancel an armed local task without dispatching it")
+  .argument("<taskId>", "local task identifier")
+  .option("-w, --workspace <path>", "workspace root (defaults to current directory)")
+  .option("--attempt <n>", "attempt fence", "1")
+  .option("--json", "machine-readable output", false)
+  .action((taskId: string, opts: { workspace?: string; attempt: string; json: boolean }) => {
+    try {
+      const workspace = new Workspace(resolveWorkspace(opts.workspace));
+      const parsedAttempt = Number.parseInt(opts.attempt, 10);
+      if (!Number.isInteger(parsedAttempt)) throw new TaskInboxError("ATTEMPT_INVALID", "attempt must be an integer");
+      const task = new TaskInbox(workspace.id).cancel(taskId, { workspaceId: workspace.id, attempt: parsedAttempt });
+      if (opts.json) say(JSON.stringify({ ok: true, workspaceId: workspace.id, task }));
+      else check(`任务已取消（${task.taskId}）`);
+    } catch (error) {
+      handleCliError(error, opts.json);
     }
   });
 

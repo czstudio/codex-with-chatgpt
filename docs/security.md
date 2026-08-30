@@ -29,6 +29,9 @@
 | Admin API abuse | Loopback-only + random admin token (0600 runtime file) + requests with proxy headers (`cf-connecting-ip`, `x-forwarded-for`) rejected; unauthenticated probes get 404 |
 | Log credential leakage | Logger redacts token prefixes, bearer headers, token-like parameters, and pairing-code-shaped strings before writing |
 | Prompt injection via repo | Tool descriptions state content is untrusted data; the bridge grants no additional authority regardless of content; ChatGPT has zero write/exec capability |
+| Unintended task dispatch | Arming is local CLI-only and explicit; the durable envelope accepts only `codex_turn`, attempt `1`, a workspace fence and an idempotency key; MCP exposes observation only |
+| Replay or stale recovery | Per-task atomic envelopes and exclusive locks allow one claim; dispatch/result receipts share task, workspace, arm, attempt and idempotency fences; restart discovery never auto-runs pending work |
+| Receipt or prompt leakage | Receipts contain bounded status/test metadata and changed-file counts only; URLs, file paths, prompts, browser state, credentials and raw invoker errors are rejected or omitted |
 
 ## Token & scope design
 
@@ -54,3 +57,25 @@ integration is a V2 item.
 Write files, delete files, run shell commands, commit, install packages —
 these tools do not exist on the server, so no prompt injection, scope bug, or
 UI confusion can enable them.
+
+## Local task inbox boundary
+
+The task inbox is a local recovery primitive, not a second business state
+machine. `c2c task arm` resolves a real workspace and persists an owner-only
+envelope under the application state directory. The envelope contains only a
+fixed operation (`codex_turn`) and bounded correlation metadata. It does not
+contain a ChatGPT conversation URL, prompt, browser session, credential or
+arbitrary command. A task may be armed once and claimed once for attempt `1`.
+
+The dispatcher is not exposed as a generic MCP or shell interface. Its allowlist
+has one operation, and its invoker receives metadata rather than user-supplied
+code or a command string. Atomic writes, an exclusive per-task lock and
+idempotent receipts prevent a concurrent or replayed claim from becoming a
+second dispatch. If a process stops after claiming, startup can observe the
+durable `DISPATCHING`/`RUNNING` envelope but must not infer that it is safe to
+rerun. The existing receipt or an explicit, fenced recovery action is required.
+
+MCP `task_status` and `task_result` are read-only, scope-protected views. They
+validate workspace and receipt fences and return only bounded metadata. They do
+not expose an arming, dispatch, cancellation, file-write, shell or session
+operation, and they never read or modify Codex sessions or credentials.

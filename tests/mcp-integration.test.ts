@@ -55,7 +55,7 @@ afterAll(async () => {
 });
 
 describe("MCP tools over Streamable HTTP", () => {
-  it("lists all eight read-only tools", async () => {
+  it("lists all ten read-only tools", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name).sort();
     expect(names).toEqual([
@@ -65,11 +65,13 @@ describe("MCP tools over Streamable HTTP", () => {
       "list_directory",
       "read_file",
       "search_workspace",
+      "task_result",
+      "task_status",
       "test_status",
       "workspace_info",
     ]);
     // no write tools in V1
-    for (const forbidden of ["write_file", "delete_file", "execute_shell", "git_commit", "install_package"]) {
+    for (const forbidden of ["write_file", "delete_file", "execute_shell", "git_commit", "install_package", "task_arm", "task_dispatch"]) {
       expect(names).not.toContain(forbidden);
     }
   });
@@ -185,6 +187,19 @@ describe("MCP tools over Streamable HTTP", () => {
     expect(summary.authority).toBe("local-audit-hint-only");
     expect(summary.records).toHaveLength(1);
     expect(summary.latestCheckpoint.state).toBe("BLOCKED");
+  });
+
+  it("task status and result are read-only durable inbox observations", async () => {
+    const status = jsonOf<{ authority: string; workspaceId: string; tasks: unknown[] }>(
+      await client.callTool({ name: "task_status", arguments: {} })
+    );
+    expect(status.authority).toBe("local-task-inbox");
+    expect(status.workspaceId).toBe(bridge.workspace.id);
+    expect(status.tasks).toEqual([]);
+
+    const missing = await client.callTool({ name: "task_result", arguments: { task_id: "missing-task" } });
+    expect(missing.isError).toBe(true);
+    expect(textOf(missing)).toContain("TASK_NOT_FOUND");
   });
 
   it("enforces scopes per tool", async () => {

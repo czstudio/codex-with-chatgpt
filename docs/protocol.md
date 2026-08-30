@@ -105,6 +105,38 @@ short summary, known issues, and next expected step. `execution_summary` can
 filter these records by `task_id`, so a resumed reviewer does not mix tasks.
 This append-only audit trail is a recovery hint, not a business state machine.
 
+## Local task inbox and recovery
+
+The local CLI is the only arming surface. Arming writes a durable, owner-only
+envelope and does not dispatch work:
+
+```
+c2c task arm c2c_f81a --workspace /path/to/workspace --operation codex_turn \
+  --attempt 1 --arm-id arm_001 --idempotency-key idem_001 --json
+```
+
+The envelope is bound to the resolved workspace identity and to attempt `1`.
+Only the fixed `codex_turn` operation is accepted. A repeated arm with the same
+task, arm and idempotency key is idempotent while still `ARMED`; a conflicting
+arm or an arm after a transition is rejected. Other CLI operations are limited
+to local status and cancellation of an as-yet unclaimed task. There is no CLI
+dispatch command.
+
+The recoverable dispatcher is an internal seam. It claims an `ARMED` envelope
+once, writes a bounded dispatch receipt, and invokes only the approved
+`codex_turn` operation. It passes task/workspace/arm/attempt/idempotency metadata,
+never arbitrary shell text, URLs, prompts, browser state or credentials. A
+result receipt is written before the envelope becomes terminal and is bound to
+the same task, arm, attempt, idempotency key and dispatch id. Duplicate claims,
+stale attempts, workspace mismatches and replayed keys fail closed.
+
+After a process restart, recovery reads durable envelopes and reports
+`ARMED`/in-flight tasks for explicit reconciliation; it does not automatically
+invoke or blindly rerun them. An in-flight task remains fenced until an
+operator or trusted local Controller makes a deliberate decision. `task_status`
+and `task_result` are read-only MCP observations of this local state and its
+bounded receipt; they cannot arm, dispatch, cancel, write files or run commands.
+
 ### DONE / BLOCKED (ChatGPT → Codex)
 
 ```
