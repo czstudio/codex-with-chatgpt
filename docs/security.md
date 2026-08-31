@@ -32,6 +32,11 @@
 | Unintended task dispatch | Arming is local CLI-only and explicit; the durable envelope accepts only `codex_turn`, attempt `1`, a workspace fence and an idempotency key; MCP exposes observation only |
 | Replay or stale recovery | Per-task atomic envelopes and exclusive locks allow one claim; dispatch/result receipts share task, workspace, arm, attempt and idempotency fences; restart discovery never auto-runs pending work |
 | Receipt or prompt leakage | Receipts contain bounded status/test metadata and changed-file counts only; URLs, file paths, prompts, browser state, credentials and raw invoker errors are rejected or omitted |
+| Browser bridge exposure | The extension bridge binds only to `127.0.0.1`/`::1`, rejects proxy-forwarding headers and non-extension origins, and requires a high-entropy one-time nonce |
+| Nonce replay or theft | The nonce is generated in memory, never persisted, consumed before authenticated body validation, and cleared by the extension after one request; the local CLI retrieves it only through an owner-only admin token |
+| Browser control injection | The extension has no cookie, webRequest, tabs or scripting permission; it scans only strict C2C blocks in ChatGPT code elements and requires an explicit user click |
+| Command injection through handoff | The block has a fixed ordered schema with safe identifiers only; the invoker uses a literal `codex` executable, `shell: false`, fixed argv, stdin-only fixed prompt and no approval bypass |
+| Startup service abuse | launchd and Task Scheduler scripts register only `c2c extension start` for one explicit workspace; they never arm tasks, dispatch on their own, or accept a generic command argument |
 
 ## Token & scope design
 
@@ -46,11 +51,18 @@ State lives under the OS-convention app dir
 (`~/Library/Application Support/codex-with-chatgpt` on macOS), directories 0700,
 files 0600. Named-hostname preference and tunnel metadata live there too
 (`tunnels/<workspaceId>.json`) — never in the project. Only SHA-256 hashes of
-tokens are persisted — a stolen state file does not yield usable bearer tokens.
+OAuth/tunnel tokens are persisted — a stolen state file does not yield usable
+bearer tokens. The optional extension bridge has a separate owner-only
+`extension-runtime/<workspaceId>.json` record containing its loopback endpoint
+and a local admin capability used only by `c2c extension nonce`; this is not an
+OAuth bearer token, is never returned by the bridge or extension, and is removed
+when the bridge stops. The one-time browser nonce itself remains memory-only.
 
-**V1 limitation**: client registrations and token hashes are file-based rather
-than OS-keychain-based. Raw tokens are never written anywhere. Keychain
-integration is a V2 item.
+**V1 limitation**: client registrations and OAuth token hashes are file-based
+rather than OS-keychain-based. Raw OAuth tokens are never written anywhere.
+The bridge admin capability is deliberately scoped to the owner-only local
+runtime record above and is not a general bearer token. Keychain integration is
+a V2 item.
 
 ## What ChatGPT can never do (V1)
 
@@ -79,3 +91,29 @@ MCP `task_status` and `task_result` are read-only, scope-protected views. They
 validate workspace and receipt fences and return only bounded metadata. They do
 not expose an arming, dispatch, cancellation, file-write, shell or session
 operation, and they never read or modify Codex sessions or credentials.
+
+## Browser extension boundary
+
+The optional Chromium extension is a narrow presentation and handoff client. Its
+manifest grants `storage` and loopback host access only; its content script is
+matched only on the two ChatGPT HTTPS origins and never reads cookies, page
+tokens, local session state or arbitrary page text. It recognizes one canonical
+`c2c-task` fence containing seven ordered fields. Unknown fields, duplicate
+fields, URLs, prompts, arbitrary operations and attempts other than `1` are
+rejected before a network request.
+
+The loopback bridge is not an arm endpoint. It accepts exactly one authenticated
+dispatch request per generated nonce. It binds the request to the configured
+workspace and the durable inbox's `arm_id`, `attempt`, `operation` and
+`idempotency_key`, and returns a whitelist of structured receipt metadata. It
+does not expose stdout/stderr, invoke a shell, retrieve credentials, inspect
+browser sessions or read/write Codex session files. A malformed request with a
+valid nonce consumes that nonce as well; this deliberate fail-closed behavior
+prevents an attacker who obtained a nonce from probing for a second accepted
+shape.
+
+The real invoker runs `codex exec` with `--ephemeral`, so this handoff does not
+create or recover a persistent Codex session. The command is bounded by a fixed
+workspace, `workspace-write` sandbox, stdin prompt, timeout and output limit.
+The dispatcher remains the only local execution seam, while MCP remains a
+read-only observer of durable task and result state.

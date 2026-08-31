@@ -137,6 +137,54 @@ operator or trusted local Controller makes a deliberate decision. `task_status`
 and `task_result` are read-only MCP observations of this local state and its
 bounded receipt; they cannot arm, dispatch, cancel, write files or run commands.
 
+## Local browser handoff (optional)
+
+The browser path is a separate, local-only handoff for an already armed task. It
+does not arm a task and it does not turn ChatGPT into an executor. Start the
+bridge in the foreground (or through one of the supplied per-user startup
+scripts):
+
+```
+c2c extension start --workspace /path/to/workspace
+c2c extension nonce --workspace /path/to/workspace --json
+```
+
+Paste the returned one-time `nonce` and the printed port into the minimal
+Chromium extension popup. The extension only scans `pre code` elements on
+`chatgpt.com` and `chat.openai.com` for this exact shape; no prompt, URL,
+command, conversation id, cookie or token field is accepted:
+
+````
+```c2c-task
+[C2C_TASK]
+VERSION: 1
+TASK_ID: c2c_f81a
+WORKSPACE_ID: 0123456789ab
+OPERATION: codex_turn
+ATTEMPT: 1
+ARM_ID: arm_001
+IDEMPOTENCY_KEY: idem_001
+[/C2C_TASK]
+```
+````
+
+The user must click the injected button. The browser sends one POST to
+`http://127.0.0.1:<port>/v1/task/dispatch` with the nonce and the block. The
+bridge checks loopback origin, workspace, arm, operation and attempt fences,
+then invokes the same fixed `codex exec --ephemeral --json --sandbox
+workspace-write --cd <workspace> -` command. It never uses `resume`, reads or
+writes Codex session data, enables an approval bypass, or accepts arbitrary
+shell input. The nonce is consumed before task validation and is never written
+to the runtime file; malformed authenticated input therefore also requires a
+fresh explicit nonce. The extension clears its local nonce after the request,
+including an ambiguous network result, so there is no automatic retry.
+
+Only a bounded structured result (status, receipt ids, test summary and changed
+file count) is returned to the page. Raw CLI output, prompts, paths, credentials
+and session data stay local. Restarting the bridge exposes no recovery action to
+the browser: durable pending tasks remain for explicit local reconciliation and
+are never blindly rerun.
+
 ### DONE / BLOCKED (ChatGPT → Codex)
 
 ```
