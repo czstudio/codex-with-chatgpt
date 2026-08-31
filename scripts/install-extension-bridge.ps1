@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$scriptRoot = (Resolve-Path -LiteralPath $PSScriptRoot).Path
 $workspace = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
 if (-not (Test-Path -LiteralPath $workspace -PathType Container)) {
   throw "workspace root does not exist: $WorkspaceRoot"
@@ -13,7 +14,7 @@ if ($workspace.Contains('"')) {
   throw "workspace path contains an unsupported quote"
 }
 
-$packageRoot = Split-Path -Parent $PSScriptRoot
+$packageRoot = Split-Path -Parent $scriptRoot
 $cliPath = Join-Path $packageRoot "dist\cli\index.js"
 if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {
   throw "built CLI not found: $cliPath (run pnpm build first)"

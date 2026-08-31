@@ -11,6 +11,18 @@ if [ ! -d "$workspace_input" ]; then
   echo "workspace root does not exist: $workspace_input" >&2
   exit 2
 fi
+
+# Resolve this script before changing cwd.  `$0` is commonly relative (for
+# example, ./scripts/install-extension-bridge-macos.sh); resolving it after
+# cd would make the package path relative to the target workspace.
+script_path=$0
+case "$script_path" in
+  /*) ;;
+  *) script_path=$PWD/$script_path ;;
+esac
+script_dir=$(CDPATH= cd -- "$(dirname -- "$script_path")" && pwd -P)
+package_root=$(dirname "$script_dir")
+
 cd "$workspace_input"
 workspace_root=$(pwd -P)
 case "$workspace_root" in
@@ -20,8 +32,6 @@ case "$workspace_root" in
     ;;
 esac
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-package_root=$(dirname "$script_dir")
 cli_path=$package_root/dist/cli/index.js
 if [ ! -f "$cli_path" ]; then
   echo "built CLI not found: $cli_path (run pnpm build first)" >&2
