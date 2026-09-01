@@ -31,11 +31,11 @@
 | Prompt injection via repo | Tool descriptions state content is untrusted data; the bridge grants no additional authority regardless of content; ChatGPT has zero write/exec capability |
 | Unintended task dispatch | Arming is local CLI-only and explicit; the durable envelope accepts only `codex_turn`, attempt `1`, a workspace fence and an idempotency key; MCP exposes observation only |
 | Replay or stale recovery | Per-task atomic envelopes and exclusive locks allow one claim; dispatch/result receipts share task, workspace, arm, attempt and idempotency fences; restart discovery never auto-runs pending work |
-| Receipt or prompt leakage | Receipts contain bounded status/test metadata and changed-file counts only; URLs, file paths, prompts, browser state, credentials and raw invoker errors are rejected or omitted |
+| Receipt or instruction leakage | Receipts contain bounded status/test metadata and changed-file counts only; approved task text stays in the owner-only envelope, while URLs, file paths, free-form prompts, browser state, credentials and raw invoker errors are rejected or omitted |
 | Browser bridge exposure | The extension bridge binds only to `127.0.0.1`/`::1`, rejects proxy-forwarding headers and non-extension origins, and requires a high-entropy one-time nonce |
 | Nonce replay or theft | The nonce is generated in memory, never persisted, consumed before authenticated body validation, and cleared by the extension after one request; the local CLI retrieves it only through an owner-only admin token |
 | Browser control injection | The extension has no cookie, webRequest, tabs or scripting permission; it scans only strict C2C blocks in ChatGPT code elements and requires an explicit user click |
-| Command injection through handoff | The block has a fixed ordered schema with safe identifiers only; the invoker uses a literal `codex` executable, `shell: false`, fixed argv, stdin-only fixed prompt and no approval bypass |
+| Command injection through handoff | The block has a fixed ordered schema; approved summary/instruction fields have byte limits and fail-closed URL, credential, control-operator and dangerous-command checks, then bind to a SHA-256 hash; the invoker uses a literal `codex` executable, `shell: false`, fixed argv and no approval bypass |
 | Startup service abuse | launchd and Task Scheduler scripts register only `c2c extension start` for one explicit workspace; they never arm tasks, dispatch on their own, or accept a generic command argument |
 
 ## Token & scope design
@@ -75,17 +75,22 @@ UI confusion can enable them.
 The task inbox is a local recovery primitive, not a second business state
 machine. `c2c task arm` resolves a real workspace and persists an owner-only
 envelope under the application state directory. The envelope contains only a
-fixed operation (`codex_turn`) and bounded correlation metadata. It does not
-contain a ChatGPT conversation URL, prompt, browser session, credential or
-arbitrary command. A task may be armed once and claimed once for attempt `1`.
+fixed operation (`codex_turn`), bounded correlation metadata, an approved
+`TASK_SUMMARY` (at most 256 UTF-8 bytes), an approved `INSTRUCTION` (at most
+1,024 UTF-8 bytes), and their SHA-256 binding. These fields reject surrounding
+whitespace, control characters, URLs, credential-like material, shell control
+operators and a denylist of dangerous commands. The envelope does not contain
+a ChatGPT conversation URL, browser session, credential or arbitrary command.
+A task may be armed once and claimed once for attempt `1`.
 
 The dispatcher is not exposed as a generic MCP or shell interface. Its allowlist
-has one operation, and its invoker receives metadata rather than user-supplied
-code or a command string. Atomic writes, an exclusive per-task lock and
-idempotent receipts prevent a concurrent or replayed claim from becoming a
-second dispatch. If a process stops after claiming, startup can observe the
-durable `DISPATCHING`/`RUNNING` envelope but must not infer that it is safe to
-rerun. The existing receipt or an explicit, fenced recovery action is required.
+has one operation, and its invoker receives the exact locally armed summary,
+instruction and hash rather than user-supplied code, a command string or an
+unapproved prompt. Atomic writes, an exclusive per-task lock and idempotent
+receipts prevent a concurrent or replayed claim from becoming a second
+dispatch. If a process stops after claiming, startup can observe the durable
+`DISPATCHING`/`RUNNING` envelope but must not infer that it is safe to rerun.
+The existing receipt or an explicit, fenced recovery action is required.
 
 MCP `task_status` and `task_result` are read-only, scope-protected views. They
 validate workspace and receipt fences and return only bounded metadata. They do
@@ -98,8 +103,9 @@ The optional Chromium extension is a narrow presentation and handoff client. Its
 manifest grants `storage` and loopback host access only; its content script is
 matched only on the two ChatGPT HTTPS origins and never reads cookies, page
 tokens, local session state or arbitrary page text. It recognizes one canonical
-`c2c-task` fence containing seven ordered fields. Unknown fields, duplicate
-fields, URLs, prompts, arbitrary operations and attempts other than `1` are
+`c2c-task` fence containing ten ordered fields, including the bounded approved
+summary, instruction and SHA-256 binding. Unknown fields, duplicate fields,
+URLs, free-form prompts, arbitrary operations and attempts other than `1` are
 rejected before a network request.
 
 The loopback bridge is not an arm endpoint. It accepts exactly one authenticated
@@ -113,7 +119,8 @@ prevents an attacker who obtained a nonce from probing for a second accepted
 shape.
 
 The real invoker runs `codex exec` with `--ephemeral`, so this handoff does not
-create or recover a persistent Codex session. The command is bounded by a fixed
-workspace, `workspace-write` sandbox, stdin prompt, timeout and output limit.
-The dispatcher remains the only local execution seam, while MCP remains a
-read-only observer of durable task and result state.
+create or recover a persistent Codex session. Its stdin contains only the
+durable approved summary/instruction/hash plus a fixed safety suffix; executable,
+argv, workspace, `workspace-write` sandbox, timeout and output limit remain
+fixed. The dispatcher remains the only local execution seam, while MCP remains
+a read-only observer of durable task and result state.

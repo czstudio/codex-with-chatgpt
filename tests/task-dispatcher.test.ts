@@ -3,10 +3,16 @@ import { readExecutionRecords } from "../src/execution/records.js";
 import { readDispatchReceipt, readResultReceipt } from "../src/inbox/receipts.js";
 import { TaskDispatcher } from "../src/inbox/task-dispatcher.js";
 import { TaskInbox, TaskInboxError } from "../src/inbox/task-inbox.js";
+import { computeApprovalSummaryHash } from "../src/inbox/approval.js";
 import { isolateStateDir } from "./helpers.js";
 
 describe("recoverable task dispatcher", () => {
   beforeEach(() => isolateStateDir());
+
+  const approved = {
+    taskSummary: "Repair the local task handoff",
+    instruction: "Forward the approved instruction to the local Codex invoker.",
+  };
 
   function arm(): TaskInbox {
     const inbox = new TaskInbox("workspace-a");
@@ -16,6 +22,7 @@ describe("recoverable task dispatcher", () => {
       operation: "codex_turn",
       armId: "arm-a",
       idempotencyKey: "idem-a",
+      ...approved,
     });
     return inbox;
   }
@@ -40,6 +47,9 @@ describe("recoverable task dispatcher", () => {
       armId: "arm-a",
       attempt: 1,
       idempotencyKey: "idem-a",
+      taskSummary: approved.taskSummary,
+      instruction: approved.instruction,
+      approvalSummaryHash: computeApprovalSummaryHash(approved.taskSummary, approved.instruction),
     }));
     expect(result.task.status).toBe("SUCCEEDED");
     expect(result.resultReceipt.status).toBe("SUCCEEDED");

@@ -221,6 +221,9 @@ export async function startExtensionBridge(opts: ExtensionBridgeOptions): Promis
       const task = dispatcher.inbox.load(block.taskId);
       if (task.armId !== block.armId) throw new TaskInboxError("TASK_REPLAYED", "arm id mismatch");
       if (task.operation !== block.operation) throw new TaskInboxError("OPERATION_NOT_ALLOWED", "operation is not approved");
+      if (task.taskSummary !== block.taskSummary || task.instruction !== block.instruction || task.approvalSummaryHash !== block.approvalSummaryHash) {
+        throw new TaskInboxError("APPROVAL_MISMATCH", "task block does not match the locally armed approval");
+      }
       const result = await dispatcher.dispatch({
         taskId: block.taskId,
         workspaceId: block.workspaceId,

@@ -1,9 +1,45 @@
 (function () {
   "use strict";
 
-  const MAX_BLOCK_BYTES = 2048;
+  const MAX_BLOCK_BYTES = 4096;
+  const TASK_SUMMARY_MAX_BYTES = 256;
+  const INSTRUCTION_MAX_BYTES = 1024;
   const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
-  const KEYS = ["VERSION", "TASK_ID", "WORKSPACE_ID", "OPERATION", "ATTEMPT", "ARM_ID", "IDEMPOTENCY_KEY"];
+  const KEYS = [
+    "VERSION",
+    "TASK_ID",
+    "WORKSPACE_ID",
+    "OPERATION",
+    "ATTEMPT",
+    "ARM_ID",
+    "IDEMPOTENCY_KEY",
+    "TASK_SUMMARY",
+    "INSTRUCTION",
+    "APPROVAL_SUMMARY_HASH"
+  ];
+  const UNSAFE_APPROVAL_TEXT = [
+    /(?:https?|file|ftp):\/\//i,
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
+    /\bbearer\s+\S+/i,
+    /\b(?:bearer|api[_-]?key|access[_-]?key|password|secret|token|credential|cookie|session|private[_-]?key)\s*[:=]\s*\S+/i,
+    /\bsk-[A-Za-z0-9_-]{12,}\b/i,
+    /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,
+    /\bgh[pousr]_[A-Za-z0-9]{20,}\b/,
+    /(?:&&|\|\||[|;&`<>]|\$\(|\$\{)/,
+    /(?:^|[\s"'])\b(?:sudo|su|rm|rmdir|del|format|mkfs|dd|curl|wget|nc|netcat|ssh|scp|chmod|chown|launchctl|powershell|pwsh|bash|sh|zsh|cmd(?:\.exe)?|docker|kubectl)\b/i,
+    /\bgit\s+(?:push|reset|clean|checkout)\b/i,
+    /\b(?:npm|pnpm|yarn|pip|uv)\s+install\b/i,
+    /\b(?:ignore|disregard|override)\s+(?:the\s+)?(?:previous|system|developer|safety|local)?\s*instructions?\b/i,
+    /\b(?:approval|sandbox|security)\s+(?:bypass|override)\b/i,
+    /--(?:dangerously-)?(?:bypass|no-approval|no-sandbox)\b/i
+  ];
+
+  function safeApprovalText(value, maxBytes) {
+    return typeof value === "string" && value.length > 0 && value.trim() === value &&
+      new TextEncoder().encode(value).byteLength <= maxBytes &&
+      !/[\u0000-\u001f\u007f]/.test(value) &&
+      !UNSAFE_APPROVAL_TEXT.some((pattern) => pattern.test(value));
+  }
 
   function parseTaskBlock(value) {
     if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > MAX_BLOCK_BYTES) return null;
@@ -24,13 +60,18 @@
     }
     if (values.VERSION !== "1" || values.OPERATION !== "codex_turn" || values.ATTEMPT !== "1") return null;
     if (![values.TASK_ID, values.WORKSPACE_ID, values.ARM_ID, values.IDEMPOTENCY_KEY].every((id) => SAFE_ID.test(id))) return null;
+    if (!safeApprovalText(values.TASK_SUMMARY, TASK_SUMMARY_MAX_BYTES) || !safeApprovalText(values.INSTRUCTION, INSTRUCTION_MAX_BYTES)) return null;
+    if (!/^[a-f0-9]{64}$/.test(values.APPROVAL_SUMMARY_HASH)) return null;
     return {
       taskId: values.TASK_ID,
       workspaceId: values.WORKSPACE_ID,
       operation: values.OPERATION,
       attempt: 1,
       armId: values.ARM_ID,
-      idempotencyKey: values.IDEMPOTENCY_KEY
+      idempotencyKey: values.IDEMPOTENCY_KEY,
+      taskSummary: values.TASK_SUMMARY,
+      instruction: values.INSTRUCTION,
+      approvalSummaryHash: values.APPROVAL_SUMMARY_HASH
     };
   }
 

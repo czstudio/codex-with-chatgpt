@@ -1,8 +1,20 @@
 import type { TaskOperation } from "../inbox/task-inbox.js";
+import { validateApproval } from "../inbox/approval.js";
 
-const MAX_BLOCK_BYTES = 2_048;
+export const MAX_BLOCK_BYTES = 4_096;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
-const BLOCK_KEYS = ["VERSION", "TASK_ID", "WORKSPACE_ID", "OPERATION", "ATTEMPT", "ARM_ID", "IDEMPOTENCY_KEY"] as const;
+const BLOCK_KEYS = [
+  "VERSION",
+  "TASK_ID",
+  "WORKSPACE_ID",
+  "OPERATION",
+  "ATTEMPT",
+  "ARM_ID",
+  "IDEMPOTENCY_KEY",
+  "TASK_SUMMARY",
+  "INSTRUCTION",
+  "APPROVAL_SUMMARY_HASH",
+] as const;
 
 export type C2CTaskBlock = {
   taskId: string;
@@ -11,6 +23,9 @@ export type C2CTaskBlock = {
   attempt: 1;
   armId: string;
   idempotencyKey: string;
+  taskSummary: string;
+  instruction: string;
+  approvalSummaryHash: string;
 };
 
 export type TaskBlockErrorCode =
@@ -51,7 +66,9 @@ function unwrap(value: string): string {
 /**
  * Parse the only browser-to-local control message accepted by the bridge.
  * The parser intentionally does not have a prompt, URL, command or free-form
- * payload field. Keep this format in sync with extension/content.js.
+ * payload field. Keep this format in sync with extension/content.js. The
+ * summary, instruction and hash are approved values from the local arm; the
+ * bridge compares them with the durable envelope before dispatching.
  */
 export function parseTaskBlock(value: unknown): C2CTaskBlock {
   if (typeof value !== "string") throw new TaskBlockError("INVALID_BLOCK", "task block must be text");
@@ -65,7 +82,9 @@ export function parseTaskBlock(value: unknown): C2CTaskBlock {
 
   const entries = new Map<string, string>();
   for (const [index, line] of lines.slice(1, -1).entries()) {
-    const [key, fieldValue] = line.split(": ");
+    const separator = line.indexOf(": ");
+    const key = line.slice(0, separator);
+    const fieldValue = line.slice(separator + 2);
     if (key !== BLOCK_KEYS[index] || entries.has(key)) {
       throw new TaskBlockError("INVALID_BLOCK", "task block fields must be ordered and unique");
     }
@@ -77,6 +96,9 @@ export function parseTaskBlock(value: unknown): C2CTaskBlock {
   const workspaceId = entries.get("WORKSPACE_ID") ?? "";
   const armId = entries.get("ARM_ID") ?? "";
   const idempotencyKey = entries.get("IDEMPOTENCY_KEY") ?? "";
+  const taskSummary = entries.get("TASK_SUMMARY");
+  const instruction = entries.get("INSTRUCTION");
+  const approvalSummaryHash = entries.get("APPROVAL_SUMMARY_HASH");
   assertId(taskId, "TASK_ID");
   assertId(workspaceId, "WORKSPACE_ID");
   assertId(armId, "ARM_ID");
@@ -85,11 +107,31 @@ export function parseTaskBlock(value: unknown): C2CTaskBlock {
     throw new TaskBlockError("OPERATION_NOT_ALLOWED", "only codex_turn is accepted");
   }
   if (entries.get("ATTEMPT") !== "1") throw new TaskBlockError("ATTEMPT_INVALID", "only attempt 1 is accepted");
-
-  return { taskId, workspaceId, operation: "codex_turn", attempt: 1, armId, idempotencyKey };
+  try {
+    const approval = validateApproval(taskSummary, instruction, approvalSummaryHash);
+    return {
+      taskId,
+      workspaceId,
+      operation: "codex_turn",
+      attempt: 1,
+      armId,
+      idempotencyKey,
+      ...approval,
+    };
+  } catch (error) {
+    if (error instanceof Error) throw new TaskBlockError("INVALID_FIELD", error.message);
+    throw new TaskBlockError("INVALID_FIELD", "approved task fields are invalid");
+  }
 }
 
 export function formatTaskBlock(block: C2CTaskBlock): string {
+  let approval: ReturnType<typeof validateApproval>;
+  try {
+    approval = validateApproval(block.taskSummary, block.instruction, block.approvalSummaryHash);
+  } catch (error) {
+    if (error instanceof Error) throw new TaskBlockError("INVALID_FIELD", error.message);
+    throw new TaskBlockError("INVALID_FIELD", "approved task fields are invalid");
+  }
   // Validate before formatting so callers cannot create a block which the
   // browser and local bridge disagree about.
   const normalized = parseTaskBlock([
@@ -101,6 +143,9 @@ export function formatTaskBlock(block: C2CTaskBlock): string {
     `ATTEMPT: ${block.attempt}`,
     `ARM_ID: ${block.armId}`,
     `IDEMPOTENCY_KEY: ${block.idempotencyKey}`,
+    `TASK_SUMMARY: ${approval.taskSummary}`,
+    `INSTRUCTION: ${approval.instruction}`,
+    `APPROVAL_SUMMARY_HASH: ${approval.approvalSummaryHash}`,
     "[/C2C_TASK]",
   ].join("\n"));
   return [
@@ -112,6 +157,9 @@ export function formatTaskBlock(block: C2CTaskBlock): string {
     `ATTEMPT: ${normalized.attempt}`,
     `ARM_ID: ${normalized.armId}`,
     `IDEMPOTENCY_KEY: ${normalized.idempotencyKey}`,
+    `TASK_SUMMARY: ${normalized.taskSummary}`,
+    `INSTRUCTION: ${normalized.instruction}`,
+    `APPROVAL_SUMMARY_HASH: ${normalized.approvalSummaryHash}`,
     "[/C2C_TASK]",
   ].join("\n");
 }

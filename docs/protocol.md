@@ -3,7 +3,9 @@
 Control plane: Computer Use (tiny structured messages typed into the ChatGPT UI).
 Data plane: MCP (ChatGPT pulls files, diffs, search results itself).
 
-Never mix the two: control messages carry state, never content.
+Never mix the two: control messages carry bounded protocol fields and an
+explicitly approved task payload, never diffs, logs, secrets or arbitrary
+commands.
 
 ## States
 
@@ -112,23 +114,33 @@ envelope and does not dispatch work:
 
 ```
 c2c task arm c2c_f81a --workspace /path/to/workspace --operation codex_turn \
-  --attempt 1 --arm-id arm_001 --idempotency-key idem_001 --json
+  --attempt 1 --arm-id arm_001 --idempotency-key idem_001 \
+  --task-summary "Repair the local task handoff" \
+  --instruction "Forward the approved instruction to the local Codex invoker." \
+  --json
 ```
 
 The envelope is bound to the resolved workspace identity and to attempt `1`.
-Only the fixed `codex_turn` operation is accepted. A repeated arm with the same
-task, arm and idempotency key is idempotent while still `ARMED`; a conflicting
-arm or an arm after a transition is rejected. Other CLI operations are limited
-to local status and cancellation of an as-yet unclaimed task. There is no CLI
-dispatch command.
+Only the fixed `codex_turn` operation is accepted. Arming requires a bounded
+`TASK_SUMMARY` (at most 256 UTF-8 bytes) and `INSTRUCTION` (at most 1,024 UTF-8
+bytes). Both reject surrounding whitespace, control characters, URLs,
+credential-like material, shell control operators and a denylist of dangerous
+commands; the envelope always stores their SHA-256 binding. The optional
+`--approval-summary-hash` must match that binding when supplied. A repeated arm
+with the same task, arm, idempotency key and approved fields is idempotent while
+still `ARMED`; a conflicting arm or an arm after a transition is rejected.
+Other CLI operations are limited to local status and cancellation of an
+as-yet-unclaimed task. There is no CLI dispatch command.
 
 The recoverable dispatcher is an internal seam. It claims an `ARMED` envelope
 once, writes a bounded dispatch receipt, and invokes only the approved
 `codex_turn` operation. It passes task/workspace/arm/attempt/idempotency metadata,
-never arbitrary shell text, URLs, prompts, browser state or credentials. A
-result receipt is written before the envelope becomes terminal and is bound to
-the same task, arm, attempt, idempotency key and dispatch id. Duplicate claims,
-stale attempts, workspace mismatches and replayed keys fail closed.
+plus the exact locally armed summary, instruction and SHA-256 binding. It never
+accepts arbitrary shell text, URLs, browser state or credentials, and the
+instruction is not a free-form command or model override. A result receipt is
+written before the envelope becomes terminal and is bound to the same task, arm,
+attempt, idempotency key and dispatch id. Duplicate claims, stale attempts,
+workspace mismatches, replayed keys and approval mismatches fail closed.
 
 After a process restart, recovery reads durable envelopes and reports
 `ARMED`/in-flight tasks for explicit reconciliation; it does not automatically
@@ -151,8 +163,8 @@ c2c extension nonce --workspace /path/to/workspace --json
 
 Paste the returned one-time `nonce` and the printed port into the minimal
 Chromium extension popup. The extension only scans `pre code` elements on
-`chatgpt.com` and `chat.openai.com` for this exact shape; no prompt, URL,
-command, conversation id, cookie or token field is accepted:
+`chatgpt.com` and `chat.openai.com` for this exact shape; no free-form prompt,
+URL, command, conversation id, cookie or token field is accepted:
 
 ````
 ```c2c-task
@@ -164,20 +176,26 @@ OPERATION: codex_turn
 ATTEMPT: 1
 ARM_ID: arm_001
 IDEMPOTENCY_KEY: idem_001
+TASK_SUMMARY: Repair the local task handoff
+INSTRUCTION: Forward the approved instruction to the local Codex invoker.
+APPROVAL_SUMMARY_HASH: be9086bb9f7ee43ac244a87053346f45f68fdf1329ca4fd9fa59aaeb65d24364
 [/C2C_TASK]
 ```
 ````
 
 The user must click the injected button. The browser sends one POST to
 `http://127.0.0.1:<port>/v1/task/dispatch` with the nonce and the block. The
-bridge checks loopback origin, workspace, arm, operation and attempt fences,
-then invokes the same fixed `codex exec --ephemeral --json --sandbox
-workspace-write --cd <workspace> -` command. It never uses `resume`, reads or
-writes Codex session data, enables an approval bypass, or accepts arbitrary
-shell input. The nonce is consumed before task validation and is never written
-to the runtime file; malformed authenticated input therefore also requires a
-fresh explicit nonce. The extension clears its local nonce after the request,
-including an ambiguous network result, so there is no automatic retry.
+bridge checks loopback origin, workspace, arm, operation, attempt and approval
+summary/hash fences, then invokes the same fixed `codex exec --ephemeral --json
+--sandbox workspace-write --cd <workspace> -` command. The invoker receives the
+durable locally armed summary and instruction (plus a fixed safety suffix),
+never an unapproved or browser-supplied free-form prompt. It never uses
+`resume`, reads or writes Codex session data, enables an approval bypass, or
+accepts arbitrary shell input. The nonce is consumed before task validation and
+is never written to the runtime file; malformed authenticated input therefore
+also requires a fresh explicit nonce. The extension clears its local nonce after
+the request, including an ambiguous network result, so there is no automatic
+retry.
 
 Only a bounded structured result (status, receipt ids, test summary and changed
 file count) is returned to the page. Raw CLI output, prompts, paths, credentials

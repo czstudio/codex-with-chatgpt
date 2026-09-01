@@ -2,10 +2,11 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { CodexTurnInvoker, CodexTurnOutcome, CodexTurnRequest } from "./task-dispatcher.js";
+import { validateApproval } from "./approval.js";
 
 export const CODEX_EXECUTABLE = "codex" as const;
 export const DEFAULT_CODEX_PROMPT =
-  "Work on the already-approved local coding turn in this workspace. Inspect the current workspace and make only the smallest changes required by the local task. Do not use browser state, credentials, session recovery, or network tools. Do not bypass approval or sandbox policy. Return a short completion summary.";
+  "Work only inside the already-approved local workspace. Do not use browser state, credentials, session recovery, or network tools. Do not bypass approval or sandbox policy. Return a short completion summary.";
 
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_EVENT_LINES = 2_000;
@@ -121,8 +122,9 @@ function blocked(notes: string): CodexTurnOutcome {
 
 /**
  * A real Codex CLI seam with a deliberately closed command surface. The task
- * request is correlation metadata only; it can never change executable,
- * argv, cwd, prompt, sandbox or approval policy.
+ * request carries only the bounded, locally armed approval fields; it can
+ * change stdin content but can never change executable, argv, cwd, sandbox or
+ * approval policy.
  */
 export class CodexCliInvoker {
   private readonly executable: string;
@@ -149,7 +151,21 @@ export class CodexCliInvoker {
     this.run = options.run ?? runCodexProcess;
   }
 
-  async invoke(_request: CodexTurnRequest): Promise<CodexTurnOutcome> {
+  async invoke(request: CodexTurnRequest): Promise<CodexTurnOutcome> {
+    let prompt: string;
+    try {
+      const approval = validateApproval(request.taskSummary, request.instruction, request.approvalSummaryHash);
+      prompt = [
+        "Execute exactly this locally armed task:",
+        `TASK_SUMMARY: ${approval.taskSummary}`,
+        `INSTRUCTION: ${approval.instruction}`,
+        `APPROVAL_SUMMARY_HASH: ${approval.approvalSummaryHash}`,
+        "",
+        this.prompt,
+      ].join("\n");
+    } catch {
+      return blocked("APPROVED_TASK_INVALID");
+    }
     const args = [
       "exec",
       "--ephemeral",
@@ -169,7 +185,7 @@ export class CodexCliInvoker {
         shell: false,
         stdio: ["pipe", "pipe", "pipe"],
         timeoutMs: this.timeoutMs,
-        input: this.prompt,
+        input: prompt,
       });
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return blocked("CODEX_CLI_UNAVAILABLE");

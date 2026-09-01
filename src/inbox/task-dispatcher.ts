@@ -22,6 +22,9 @@ export type CodexTurnRequest = {
   attempt: 1;
   idempotencyKey: string;
   dispatchId: string;
+  taskSummary: string;
+  instruction: string;
+  approvalSummaryHash: string;
 };
 
 export type CodexTurnOutcome = {
@@ -167,6 +170,9 @@ export class TaskDispatcher {
         attempt: claimed.attempt,
         idempotencyKey: claimed.idempotencyKey,
         dispatchId,
+        taskSummary: claimed.taskSummary,
+        instruction: claimed.instruction,
+        approvalSummaryHash: claimed.approvalSummaryHash,
       });
     } catch {
       // Invocation errors are deliberately not copied into a receipt: they may contain

@@ -11,6 +11,11 @@ import {
 } from "../src/inbox/task-inbox.js";
 import { isolateStateDir } from "./helpers.js";
 
+const approved = {
+  taskSummary: "Repair the local task handoff",
+  instruction: "Forward the approved instruction to the local Codex invoker.",
+};
+
 describe("durable task inbox", () => {
   beforeEach(() => isolateStateDir());
 
@@ -22,6 +27,7 @@ describe("durable task inbox", () => {
       operation: "codex_turn",
       armId: "arm-a",
       idempotencyKey: "idem-a",
+      ...approved,
     });
 
     expect(task.status).toBe("ARMED");
@@ -40,6 +46,7 @@ describe("durable task inbox", () => {
       operation: "codex_turn",
       armId: "arm-a",
       idempotencyKey: "idem-a",
+      ...approved,
     });
     expect(
       armTask({
@@ -48,6 +55,7 @@ describe("durable task inbox", () => {
         operation: "codex_turn",
         armId: "arm-a",
         idempotencyKey: "idem-a",
+        ...approved,
       })
     ).toEqual(first);
 
@@ -58,6 +66,7 @@ describe("durable task inbox", () => {
         operation: "codex_turn",
         armId: "arm-other",
         idempotencyKey: "idem-other",
+        ...approved,
       })
     ).toThrowError(TaskInboxError);
   });
@@ -72,6 +81,7 @@ describe("durable task inbox", () => {
         operation: "codex_turn",
         armId: "arm-a",
         idempotencyKey: "idem-a",
+        ...approved,
       })
     ).toThrow(/WORKSPACE_MISMATCH/);
     expect(() =>
@@ -81,6 +91,7 @@ describe("durable task inbox", () => {
         operation: "arbitrary_shell" as never,
         armId: "arm-b",
         idempotencyKey: "idem-b",
+        ...approved,
       })
     ).toThrow(/OPERATION_NOT_ALLOWED/);
     expect(() =>
@@ -91,8 +102,40 @@ describe("durable task inbox", () => {
         attempt: 2,
         armId: "arm-c",
         idempotencyKey: "idem-c",
+        ...approved,
       })
     ).toThrow(/ATTEMPT_INVALID/);
+  });
+
+  it("fails closed when the approved summary or instruction is missing or unsafe", () => {
+    const inbox = new TaskInbox("workspace-a");
+    expect(() => inbox.arm({
+      taskId: "task-missing",
+      workspaceId: "workspace-a",
+      operation: "codex_turn",
+      armId: "arm-missing",
+      idempotencyKey: "idem-missing",
+      taskSummary: "",
+      instruction: approved.instruction,
+    })).toThrow(/APPROVAL_INVALID/);
+    expect(() => inbox.arm({
+      taskId: "task-dangerous",
+      workspaceId: "workspace-a",
+      operation: "codex_turn",
+      armId: "arm-dangerous",
+      idempotencyKey: "idem-dangerous",
+      taskSummary: approved.taskSummary,
+      instruction: "rm -rf workspace",
+    })).toThrow(/APPROVAL_INVALID/);
+    expect(() => inbox.arm({
+      taskId: "task-hash-mismatch",
+      workspaceId: "workspace-a",
+      operation: "codex_turn",
+      armId: "arm-hash-mismatch",
+      idempotencyKey: "idem-hash-mismatch",
+      ...approved,
+      approvalSummaryHash: "0".repeat(64),
+    })).toThrow(/APPROVAL_INVALID/);
   });
 
   it("does not allow a stale attempt to transition a durable task", () => {
@@ -103,6 +146,7 @@ describe("durable task inbox", () => {
       operation: "codex_turn",
       armId: "arm-a",
       idempotencyKey: "idem-a",
+      ...approved,
     });
     expect(() =>
       inbox.claim("task-a", {
@@ -123,6 +167,7 @@ describe("durable task inbox", () => {
       operation: "codex_turn",
       armId: "arm-a",
       idempotencyKey: "idem-a",
+      ...approved,
     });
     expect(inbox.cancel("task-a", { workspaceId: "workspace-a", attempt: 1 }).status).toBe("CANCELLED");
     expect(() => inbox.claim("task-a", {
@@ -147,6 +192,7 @@ describe("durable task inbox", () => {
       operation: "codex_turn",
       armId: "arm-a",
       idempotencyKey: "idem-a",
+      ...approved,
     });
     (task as TaskEnvelope).status = "SUCCEEDED";
     expect(inbox.load("task-a").status).toBe("ARMED");

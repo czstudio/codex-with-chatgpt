@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { ensureDir, getStateDir } from "../config/paths.js";
+import { validateApproval } from "./approval.js";
 
 export const ALLOWED_TASK_OPERATIONS = ["codex_turn"] as const;
 export type TaskOperation = (typeof ALLOWED_TASK_OPERATIONS)[number];
@@ -37,6 +38,9 @@ export type TaskEnvelope = {
   updatedAt: string;
   dispatchId?: string;
   resultReceiptId?: string;
+  taskSummary: string;
+  instruction: string;
+  approvalSummaryHash: string;
 };
 
 export type ArmTaskInput = {
@@ -46,6 +50,9 @@ export type ArmTaskInput = {
   attempt?: number;
   armId?: string;
   idempotencyKey?: string;
+  taskSummary: string;
+  instruction: string;
+  approvalSummaryHash?: string;
 };
 
 export type TaskClaimInput = {
@@ -73,6 +80,8 @@ export class TaskInboxError extends Error {
       | "TASK_REPLAYED"
       | "TASK_BUSY"
       | "INBOX_INTEGRITY_FAILURE"
+      | "APPROVAL_INVALID"
+      | "APPROVAL_MISMATCH"
       | "INVALID_TASK_ID"
       | "INVALID_IDEMPOTENCY_KEY",
     message?: string
@@ -136,6 +145,9 @@ function validateEnvelope(value: unknown, expectedWorkspaceId: string): TaskEnve
     "updatedAt",
     "dispatchId",
     "resultReceiptId",
+    "taskSummary",
+    "instruction",
+    "approvalSummaryHash",
   ]);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new TaskInboxError("INBOX_INTEGRITY_FAILURE", "unknown envelope field");
@@ -159,6 +171,12 @@ function validateEnvelope(value: unknown, expectedWorkspaceId: string): TaskEnve
   }
   assertWorkspace(expectedWorkspaceId, value.workspaceId);
   assertOperation(value.operation);
+  try {
+    validateApproval(value.taskSummary, value.instruction, value.approvalSummaryHash);
+  } catch (error) {
+    if (error instanceof Error) throw new TaskInboxError("INBOX_INTEGRITY_FAILURE", error.message);
+    throw new TaskInboxError("INBOX_INTEGRITY_FAILURE", "invalid approved task fields");
+  }
   if (value.attempt !== 1 || typeof value.attempt !== "number") {
     throw new TaskInboxError("INBOX_INTEGRITY_FAILURE", "attempt must be 1");
   }
@@ -305,12 +323,21 @@ export class TaskInbox {
     const idempotencyKey = input.idempotencyKey ?? randomUUID();
     assertSafeId(armId, "armId");
     assertSafeId(idempotencyKey, "idempotencyKey");
+    let approval: ReturnType<typeof validateApproval>;
+    try {
+      approval = validateApproval(input.taskSummary, input.instruction, input.approvalSummaryHash);
+    } catch (error) {
+      if (error instanceof Error) throw new TaskInboxError("APPROVAL_INVALID", error.message);
+      throw new TaskInboxError("APPROVAL_INVALID", "approved task fields are invalid");
+    }
     const file = this.filePath(input.taskId);
 
     if (fs.existsSync(file)) {
       const existing = this.readFile(input.taskId);
       const sameArm = existing.workspaceId === input.workspaceId && existing.operation === input.operation &&
-        existing.attempt === (input.attempt ?? 1) && existing.armId === armId && existing.idempotencyKey === idempotencyKey;
+        existing.attempt === (input.attempt ?? 1) && existing.armId === armId && existing.idempotencyKey === idempotencyKey &&
+        existing.taskSummary === approval.taskSummary && existing.instruction === approval.instruction &&
+        existing.approvalSummaryHash === approval.approvalSummaryHash;
       if (sameArm && existing.status === "ARMED") return clone(existing);
       if (sameArm) throw new TaskInboxError("TASK_REPLAYED", `task '${input.taskId}' has already transitioned`);
       throw new TaskInboxError("TASK_ALREADY_EXISTS", `task '${input.taskId}' is already armed`);
@@ -320,7 +347,9 @@ export class TaskInbox {
       if (fs.existsSync(file)) {
         const existing = this.readFile(input.taskId);
         const sameArm = existing.workspaceId === input.workspaceId && existing.operation === input.operation &&
-          existing.attempt === (input.attempt ?? 1) && existing.armId === armId && existing.idempotencyKey === idempotencyKey;
+          existing.attempt === (input.attempt ?? 1) && existing.armId === armId && existing.idempotencyKey === idempotencyKey &&
+          existing.taskSummary === approval.taskSummary && existing.instruction === approval.instruction &&
+          existing.approvalSummaryHash === approval.approvalSummaryHash;
         if (sameArm && existing.status === "ARMED") return clone(existing);
         if (sameArm) throw new TaskInboxError("TASK_REPLAYED", `task '${input.taskId}' has already transitioned`);
         throw new TaskInboxError("TASK_ALREADY_EXISTS", `task '${input.taskId}' is already armed`);
@@ -337,6 +366,7 @@ export class TaskInbox {
         armId,
         attempt: 1,
         idempotencyKey,
+        ...approval,
         status: "ARMED",
         createdAt: timestamp,
         updatedAt: timestamp,

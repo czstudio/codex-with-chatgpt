@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { CodexCliInvoker, type CodexProcessRunner } from "../src/inbox/codex-invoker.js";
+import { computeApprovalSummaryHash } from "../src/inbox/approval.js";
+
+const taskSummary = "Repair the task handoff";
+const instruction = "Update the dispatcher so it forwards the approved instruction.";
 
 const request = {
   taskId: "task_a",
@@ -9,10 +13,25 @@ const request = {
   attempt: 1 as const,
   idempotencyKey: "idem_a",
   dispatchId: "dispatch_a",
+  taskSummary,
+  instruction,
+  approvalSummaryHash: computeApprovalSummaryHash(taskSummary, instruction),
 };
 
 describe("fixed Codex CLI invoker", () => {
-  it("uses only the fixed executable and argv, with no shell or request prompt", async () => {
+  it("passes the arm-approved task instruction to Codex stdin", async () => {
+    let stdin = "";
+    const run: CodexProcessRunner = async (_file, _args, options) => {
+      stdin = options.input;
+      return { exitCode: 0, signal: null, stdout: '{"type":"turn.completed"}\n', stderr: "" };
+    };
+    const invoker = new CodexCliInvoker({ workspaceRoot: process.cwd(), run });
+    await invoker.invoke(request);
+
+    expect(stdin).toContain("Update the dispatcher so it forwards the approved instruction.");
+  });
+
+  it("uses only the fixed executable and argv, with no shell or request data in argv", async () => {
     let called: { file: string; args: readonly string[]; options: { cwd: string; shell: false } } | undefined;
     const run: CodexProcessRunner = async (file, args, options) => {
       called = { file, args, options };
@@ -38,6 +57,26 @@ describe("fixed Codex CLI invoker", () => {
     expect(called?.options.shell).toBe(false);
     expect(called?.args.join(" ")).not.toContain(request.taskId);
     expect(called?.args.join(" ")).not.toContain("arbitrary_shell");
+  });
+
+  it("blocks unsafe approved instructions before spawning Codex", async () => {
+    let called = false;
+    const run: CodexProcessRunner = async () => {
+      called = true;
+      return { exitCode: 0, signal: null, stdout: '{"type":"turn.completed"}\n', stderr: "" };
+    };
+    const invoker = new CodexCliInvoker({ workspaceRoot: process.cwd(), run });
+    await expect(invoker.invoke({
+      ...request,
+      instruction: "rm -rf workspace",
+      approvalSummaryHash: computeApprovalSummaryHash(request.taskSummary, "rm -rf workspace"),
+    })).resolves.toEqual({
+      exitStatus: "blocked",
+      tests: null,
+      changedFiles: 0,
+      notes: "APPROVED_TASK_INVALID",
+    });
+    expect(called).toBe(false);
   });
 
   it("fails closed when the CLI is unavailable or emits a failed turn", async () => {

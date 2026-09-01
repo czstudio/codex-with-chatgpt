@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startExtensionBridge, type ExtensionBridge } from "../src/extension/bridge.js";
-import { formatTaskBlock } from "../src/extension/task-block.js";
+import { formatTaskBlock, parseTaskBlock } from "../src/extension/task-block.js";
+import { computeApprovalSummaryHash } from "../src/inbox/approval.js";
 import { TaskInbox } from "../src/inbox/task-inbox.js";
 import { Workspace } from "../src/workspace/manager.js";
 import { isolateStateDir, makeGitRepo, makeTmpDir, cleanup } from "./helpers.js";
@@ -8,6 +9,10 @@ import { isolateStateDir, makeGitRepo, makeTmpDir, cleanup } from "./helpers.js"
 describe("localhost extension bridge", () => {
   let root: string;
   let bridge: ExtensionBridge | undefined;
+  const approved = {
+    taskSummary: "Repair the local task handoff",
+    instruction: "Forward the approved instruction to the local Codex invoker.",
+  };
 
   beforeEach(() => {
     isolateStateDir();
@@ -29,6 +34,7 @@ describe("localhost extension bridge", () => {
       operation: "codex_turn",
       armId: "arm_a",
       idempotencyKey: "idem_a",
+      ...approved,
     });
     return {
       workspaceId: workspace.id,
@@ -39,6 +45,8 @@ describe("localhost extension bridge", () => {
         attempt: 1,
         armId: "arm_a",
         idempotencyKey: "idem_a",
+        ...approved,
+        approvalSummaryHash: computeApprovalSummaryHash(approved.taskSummary, approved.instruction),
       }),
     };
   }
@@ -96,6 +104,40 @@ describe("localhost extension bridge", () => {
     });
     expect(replay.status).toBe(409);
     expect((await replay.json()).error).toBe("NONCE_REPLAYED");
+  });
+
+  it("rejects a browser block whose approved instruction differs from the local arm", async () => {
+    const { block } = await armedBlock();
+    const original = parseTaskBlock(block);
+    const tamperedInstruction = "Inspect only the local task state.";
+    const tampered = formatTaskBlock({
+      ...original,
+      instruction: tamperedInstruction,
+      approvalSummaryHash: computeApprovalSummaryHash(original.taskSummary, tamperedInstruction),
+    });
+    let calls = 0;
+    bridge = await startExtensionBridge({
+      workspaceRoot: root,
+      port: 0,
+      persistRuntime: false,
+      invoke: () => {
+        calls++;
+        return { exitStatus: "ok" };
+      },
+    });
+
+    const response = await fetch(`${bridge.localBaseUrl()}/v1/task/dispatch`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bridge.nonce}`,
+        origin: "chrome-extension://abcdefghijklmnop",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ block: tampered }),
+    });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toBe("APPROVAL_MISMATCH");
+    expect(calls).toBe(0);
   });
 
   it("never arms from the browser and rejects wrong workspace or malformed blocks", async () => {

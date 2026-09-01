@@ -742,6 +742,9 @@ taskCmd
   .option("--attempt <n>", "attempt fence (only 1 is accepted)", "1")
   .option("--arm-id <id>", "stable arm identifier")
   .option("--idempotency-key <key>", "stable idempotency key")
+  .option("--task-summary <summary>", "bounded approved task summary (required)")
+  .option("--instruction <instruction>", "bounded approved instruction (required)")
+  .option("--approval-summary-hash <sha256>", "optional SHA-256 binding for the approved summary and instruction")
   .option("--json", "machine-readable output", false)
   .action(
     (
@@ -754,6 +757,9 @@ taskCmd
         attempt: string;
         armId?: string;
         idempotencyKey?: string;
+        taskSummary?: string;
+        instruction?: string;
+        approvalSummaryHash?: string;
         json: boolean;
       }
     ) => {
@@ -770,6 +776,9 @@ taskCmd
           attempt: parsedAttempt,
           armId: opts.armId,
           idempotencyKey: opts.idempotencyKey,
+          taskSummary: opts.taskSummary ?? "",
+          instruction: opts.instruction ?? "",
+          approvalSummaryHash: opts.approvalSummaryHash,
         });
         if (opts.json) say(JSON.stringify({ ok: true, workspaceId: workspace.id, task }));
         else check(`任务已 arm（${task.taskId}，尚未 dispatch）`);
