@@ -121,7 +121,10 @@
   }
 
   function scan() {
-    document.querySelectorAll("pre code").forEach(attach);
+    // ChatGPT may keep a fenced c2c-task in a pre > code block or render it
+    // as a standalone code node. Every candidate still goes through the
+    // complete task-block parser above, so ordinary inline code is ignored.
+    document.querySelectorAll("code").forEach(attach);
   }
 
   scan();

@@ -162,9 +162,10 @@ c2c extension start --workspace /path/to/workspace
 
 The bridge always binds to loopback port `62141`; a collision fails closed and
 never selects another port. The minimal Chromium extension has no port or nonce
-input. It only scans `pre code` elements on `chatgpt.com` and
-`chat.openai.com` for this exact shape; no free-form prompt, URL, command,
-conversation id, cookie or token field is accepted:
+input. It only scans `code` elements on `chatgpt.com` and `chat.openai.com` for
+this exact shape, whether ChatGPT renders the node inside `pre` or standalone;
+no free-form prompt, URL, command, conversation id, cookie or token field is
+accepted:
 
 ````
 ```c2c-task
