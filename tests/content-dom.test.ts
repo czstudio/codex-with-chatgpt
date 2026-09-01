@@ -143,6 +143,8 @@ describe("ChatGPT content-script DOM fixtures", () => {
 
     const ordinaryInline = document.body.appendChild(new FixtureElement("code", "inline c2c-task text"));
     const wrongLanguage = document.body.appendChild(new FixtureElement("code", `python\n${block}`));
+    const languageWithSuffix = document.body.appendChild(new FixtureElement("code", `c2c-task extra\n${block}`));
+    const languageWithLeadingSpace = document.body.appendChild(new FixtureElement("code", ` c2c-task\n${block}`));
     const missingMarker = document.body.appendChild(new FixtureElement("code", `c2c-task\n${block.replace("[C2C_TASK]\n", "")}`));
     const duplicateField = document.body.appendChild(new FixtureElement("code", `c2c-task\n${block.replace("ARM_ID: arm_dom", "ARM_ID: arm_dom\nARM_ID: arm_dup")}`));
     const incompleteFence = document.body.appendChild(new FixtureElement("code", `\`\`\`c2c-task\n${block}\n`));
@@ -155,6 +157,8 @@ describe("ChatGPT content-script DOM fixtures", () => {
     expect(renderedLanguageCode.dataset.c2cHandoffAttached).toBe("1");
     expect(ordinaryInline.dataset.c2cHandoffAttached).toBeUndefined();
     expect(wrongLanguage.dataset.c2cHandoffAttached).toBeUndefined();
+    expect(languageWithSuffix.dataset.c2cHandoffAttached).toBeUndefined();
+    expect(languageWithLeadingSpace.dataset.c2cHandoffAttached).toBeUndefined();
     expect(missingMarker.dataset.c2cHandoffAttached).toBeUndefined();
     expect(duplicateField.dataset.c2cHandoffAttached).toBeUndefined();
     expect(incompleteFence.dataset.c2cHandoffAttached).toBeUndefined();
