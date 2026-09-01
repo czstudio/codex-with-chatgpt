@@ -24,6 +24,15 @@ describe("strict C2C task blocks", () => {
     expect(parseTaskBlock(`\`\`\`c2c-task\n${block}\n\`\`\``)).toEqual(valid);
   });
 
+  it("accepts ChatGPT's backtick-stripped language line only for a complete task block", () => {
+    const block = formatTaskBlock(valid);
+    expect(parseTaskBlock(`c2c-task\n${block}`)).toEqual(valid);
+    expect(() => parseTaskBlock(`C2C-TASK\n${block}`)).toThrow(TaskBlockError);
+    expect(() => parseTaskBlock(`c2c-task extra\n${block}`)).toThrow(TaskBlockError);
+    expect(() => parseTaskBlock(`c2c-task\n${block.replace("[C2C_TASK]\n", "")}`)).toThrow(TaskBlockError);
+    expect(() => parseTaskBlock(`c2c-task\n${block.replace("ARM_ID: arm_a", "ARM_ID: arm_a\nARM_ID: arm_b")}`)).toThrow(TaskBlockError);
+  });
+
   it("rejects unknown fields, duplicate fields, arbitrary operations and stale attempts", () => {
     const block = formatTaskBlock(valid);
     expect(() => parseTaskBlock(block.replace("IDEMPOTENCY_KEY: idem_a", "PROMPT: run rm -rf\nIDEMPOTENCY_KEY: idem_a"))).toThrow(

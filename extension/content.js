@@ -43,12 +43,16 @@
 
   function parseTaskBlock(value) {
     if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > MAX_BLOCK_BYTES) return null;
-    const trimmed = value.replace(/\r\n/g, "\n").trim();
+    const normalized = value.replace(/\r\n/g, "\n");
+    const trimmed = normalized.trim();
     let body = trimmed;
     if (trimmed.startsWith("```")) {
       const match = /^```c2c-task\n([\s\S]*?)\n```$/.exec(trimmed);
       if (!match) return null;
       body = match[1];
+    } else if (normalized.startsWith("c2c-task\n")) {
+      body = normalized.slice("c2c-task\n".length).trim();
+      if (!body.startsWith("[C2C_TASK]\n")) return null;
     }
     const lines = body.split("\n");
     if (lines.length !== KEYS.length + 2 || lines[0] !== "[C2C_TASK]" || lines[lines.length - 1] !== "[/C2C_TASK]") return null;

@@ -60,6 +60,16 @@ function unwrap(value: string): string {
     if (!match) throw new TaskBlockError("INVALID_BLOCK", "only the exact c2c-task fence is accepted");
     return match[1];
   }
+  // ChatGPT can render the fence language as the first code-node line while
+  // stripping the surrounding backticks. Accept that DOM shape only when the
+  // language line and the task marker line are both exact.
+  if (normalized.startsWith("c2c-task\n")) {
+    const body = normalized.slice("c2c-task\n".length).trim();
+    if (!body.startsWith("[C2C_TASK]\n")) {
+      throw new TaskBlockError("INVALID_BLOCK", "rendered c2c-task language must be followed by [C2C_TASK]");
+    }
+    return body;
+  }
   return trimmed;
 }
 

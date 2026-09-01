@@ -137,20 +137,31 @@ describe("ChatGPT content-script DOM fixtures", () => {
     const standaloneCode = standaloneContainer.appendChild(new FixtureElement("code", `\`\`\`c2c-task\n${block}\n\`\`\``));
     document.body.appendChild(standaloneContainer);
 
+    const renderedLanguageContainer = new FixtureElement("div");
+    const renderedLanguageCode = renderedLanguageContainer.appendChild(new FixtureElement("code", `c2c-task\n${block}`));
+    document.body.appendChild(renderedLanguageContainer);
+
     const ordinaryInline = document.body.appendChild(new FixtureElement("code", "inline c2c-task text"));
+    const wrongLanguage = document.body.appendChild(new FixtureElement("code", `python\n${block}`));
+    const missingMarker = document.body.appendChild(new FixtureElement("code", `c2c-task\n${block.replace("[C2C_TASK]\n", "")}`));
+    const duplicateField = document.body.appendChild(new FixtureElement("code", `c2c-task\n${block.replace("ARM_ID: arm_dom", "ARM_ID: arm_dom\nARM_ID: arm_dup")}`));
     const incompleteFence = document.body.appendChild(new FixtureElement("code", `\`\`\`c2c-task\n${block}\n`));
     const { messages } = runContentScript(document);
     const buttons = findByTag(document.documentElement, "button");
 
-    expect(buttons).toHaveLength(2);
+    expect(buttons).toHaveLength(3);
     expect(preCode.dataset.c2cHandoffAttached).toBe("1");
     expect(standaloneCode.dataset.c2cHandoffAttached).toBe("1");
+    expect(renderedLanguageCode.dataset.c2cHandoffAttached).toBe("1");
     expect(ordinaryInline.dataset.c2cHandoffAttached).toBeUndefined();
+    expect(wrongLanguage.dataset.c2cHandoffAttached).toBeUndefined();
+    expect(missingMarker.dataset.c2cHandoffAttached).toBeUndefined();
+    expect(duplicateField.dataset.c2cHandoffAttached).toBeUndefined();
     expect(incompleteFence.dataset.c2cHandoffAttached).toBeUndefined();
     expect(messages).toEqual([]);
 
-    buttons[1].dispatchEvent("click", { isTrusted: true });
-    expect(messages).toEqual([{ type: "dispatchTask", block: standaloneCode.textContent, userActivated: true }]);
-    expect(buttons[1].textContent).toBe("Sent");
+    buttons[2].dispatchEvent("click", { isTrusted: true });
+    expect(messages).toEqual([{ type: "dispatchTask", block: renderedLanguageCode.textContent, userActivated: true }]);
+    expect(buttons[2].textContent).toBe("Sent");
   });
 });
