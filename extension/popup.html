@@ -6,19 +6,13 @@
     <title>C2C Local Codex</title>
     <style>
       body { min-width: 280px; margin: 16px; font: 14px system-ui, sans-serif; }
-      label { display: block; margin: 10px 0 4px; }
-      input { box-sizing: border-box; width: 100%; }
-      button { margin-top: 14px; }
       #message { margin-top: 10px; min-height: 1.2em; }
     </style>
   </head>
   <body>
     <h1>C2C Local Codex</h1>
-    <label for="port">Bridge port</label>
-    <input id="port" inputmode="numeric" autocomplete="off" placeholder="48765">
-    <label for="nonce">One-time nonce</label>
-    <input id="nonce" type="password" autocomplete="off" placeholder="Paste from c2c extension nonce">
-    <button id="save" type="button">Save for one handoff</button>
+    <p>Automatic pairing is enabled.</p>
+    <p>Open a strict task block in ChatGPT and click “Send to local Codex”.</p>
     <div id="message" role="status"></div>
     <script src="popup.js"></script>
   </body>

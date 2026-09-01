@@ -26,7 +26,7 @@ import {
   TUNNEL_CHOICE_PROMPT,
 } from "../tunnel/state.js";
 import { Logger } from "../logger/index.js";
-import { getStateDir } from "../config/paths.js";
+import { EXTENSION_BRIDGE_PORT, getStateDir } from "../config/paths.js";
 import { ensureSandboxAllowlist, getCodexConfigPath, isStateDirAllowlisted } from "../config/sandbox-allow.js";
 import { TaskInbox, TaskInboxError, armTask } from "../inbox/task-inbox.js";
 import { startExtensionBridge } from "../extension/bridge.js";
@@ -836,38 +836,28 @@ taskCmd
 
 const extensionCmd = program.command("extension").description("Run the local ChatGPT browser extension bridge");
 
-function parseExtensionPort(value: string | undefined): number {
-  if (value === undefined || value.trim() === "") return 0;
-  const port = Number.parseInt(value, 10);
-  if (!Number.isInteger(port) || port < 0 || port > 65_535 || String(port) !== value.trim()) {
-    throw new Error("extension port must be an integer from 0 to 65535");
-  }
-  return port;
-}
-
 extensionCmd
   .command("start")
   .description("Start the loopback browser extension bridge in the foreground")
   .requiredOption("-w, --workspace <path>", "workspace root")
-  .option("--port <port>", "preferred loopback port (0 chooses an available port)", "0")
   .option("--json", "machine-readable output", false)
-  .action(async (opts: { workspace: string; port: string; json: boolean }) => {
+  .action(async (opts: { workspace: string; json: boolean }) => {
     try {
       const root = resolveWorkspace(opts.workspace);
-      const bridge = await startExtensionBridge({ workspaceRoot: root, port: parseExtensionPort(opts.port) });
+      const bridge = await startExtensionBridge({ workspaceRoot: root });
       const payload = {
         ok: true,
         service: "c2c-extension-bridge",
         workspaceId: bridge.workspace.id,
         port: bridge.port,
         endpoint: `${bridge.localBaseUrl()}/v1/task/dispatch`,
-        nonce: "available through `c2c extension nonce` (one-time; not printed here)",
+        pairing: "automatic on the first trusted strict-task-block click",
       };
       if (opts.json) say(JSON.stringify(payload));
       else {
         check(`本地扩展桥已启动（端口 ${bridge.port}）`);
         say(`Workspace：${bridge.workspace.id}`);
-        say("Nonce 不写入日志；运行 `c2c extension nonce` 获取一次性浏览器凭据。");
+        say(`扩展首次点击严格任务块时自动配对（固定回环端口 ${EXTENSION_BRIDGE_PORT}，无需填写端口或 nonce）。`);
       }
       let stopping = false;
       const shutdown = (): void => {
@@ -884,7 +874,7 @@ extensionCmd
 
 extensionCmd
   .command("nonce")
-  .description("Read the one-time browser nonce from a running local extension bridge")
+  .description("Read the one-time browser nonce for local diagnostics (normal extension flow pairs automatically)")
   .requiredOption("-w, --workspace <path>", "workspace root")
   .option("--json", "machine-readable output", false)
   .action(async (opts: { workspace: string; json: boolean }) => {
@@ -894,7 +884,7 @@ extensionCmd
       if (!runtime || runtime.service !== "c2c-extension-bridge" || runtime.workspaceId !== workspace.id) {
         throw new Error("EXTENSION_BRIDGE_NOT_RUNNING");
       }
-      if (!Number.isInteger(runtime.port) || runtime.port < 1 || runtime.port > 65_535 || typeof runtime.adminToken !== "string") {
+      if (runtime.port !== EXTENSION_BRIDGE_PORT || typeof runtime.adminToken !== "string") {
         throw new Error("EXTENSION_RUNTIME_INVALID");
       }
       const response = await fetch(`http://127.0.0.1:${runtime.port}/admin/nonce`, {

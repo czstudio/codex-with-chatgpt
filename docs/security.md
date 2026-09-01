@@ -32,8 +32,8 @@
 | Unintended task dispatch | Arming is local CLI-only and explicit; the durable envelope accepts only `codex_turn`, attempt `1`, a workspace fence and an idempotency key; MCP exposes observation only |
 | Replay or stale recovery | Per-task atomic envelopes and exclusive locks allow one claim; dispatch/result receipts share task, workspace, arm, attempt and idempotency fences; restart discovery never auto-runs pending work |
 | Receipt or instruction leakage | Receipts contain bounded status/test metadata and changed-file counts only; approved task text stays in the owner-only envelope, while URLs, file paths, free-form prompts, browser state, credentials and raw invoker errors are rejected or omitted |
-| Browser bridge exposure | The extension bridge binds only to `127.0.0.1`/`::1`, rejects proxy-forwarding headers and non-extension origins, and requires a high-entropy one-time nonce |
-| Nonce replay or theft | The nonce is generated in memory, never persisted, consumed before authenticated body validation, and cleared by the extension after one request; the local CLI retrieves it only through an owner-only admin token |
+| Browser bridge exposure | The extension bridge binds only to `127.0.0.1`/`::1` on fixed port `62141`, fails closed on collision, rejects proxy-forwarding headers and non-extension origins, and requires a high-entropy one-time nonce |
+| Nonce replay or theft | The nonce is generated in memory, paired once only after extension-origin and user-activation checks, never persisted, and consumed before authenticated body validation; the local CLI diagnostic retrieves it only through an owner-only admin token |
 | Browser control injection | The extension has no cookie, webRequest, tabs or scripting permission; it scans only strict C2C blocks in ChatGPT code elements and requires an explicit user click |
 | Command injection through handoff | The block has a fixed ordered schema; approved summary/instruction fields have byte limits and fail-closed URL, credential, control-operator and dangerous-command checks, then bind to a SHA-256 hash; the invoker uses a literal `codex` executable, `shell: false`, fixed argv and no approval bypass |
 | Startup service abuse | launchd and Task Scheduler scripts register only `c2c extension start` for one explicit workspace; they never arm tasks, dispatch on their own, or accept a generic command argument |
@@ -100,7 +100,7 @@ operation, and they never read or modify Codex sessions or credentials.
 ## Browser extension boundary
 
 The optional Chromium extension is a narrow presentation and handoff client. Its
-manifest grants `storage` and loopback host access only; its content script is
+manifest grants fixed-port loopback host access only; its content script is
 matched only on the two ChatGPT HTTPS origins and never reads cookies, page
 tokens, local session state or arbitrary page text. It recognizes one canonical
 `c2c-task` fence containing ten ordered fields, including the bounded approved
@@ -108,15 +108,25 @@ summary, instruction and SHA-256 binding. Unknown fields, duplicate fields,
 URLs, free-form prompts, arbitrary operations and attempts other than `1` are
 rejected before a network request.
 
-The loopback bridge is not an arm endpoint. It accepts exactly one authenticated
-dispatch request per generated nonce. It binds the request to the configured
-workspace and the durable inbox's `arm_id`, `attempt`, `operation` and
-`idempotency_key`, and returns a whitelist of structured receipt metadata. It
-does not expose stdout/stderr, invoke a shell, retrieve credentials, inspect
-browser sessions or read/write Codex session files. A malformed request with a
-valid nonce consumes that nonce as well; this deliberate fail-closed behavior
-prevents an attacker who obtained a nonce from probing for a second accepted
-shape.
+The loopback bridge is not an arm endpoint. On the first explicit strict-block
+click it accepts exactly one pairing request, but only when the extension origin,
+extension-id header and user-activation marker agree. It then accepts exactly
+one authenticated dispatch request per generated nonce. It binds the request to
+the configured workspace and the durable inbox's `arm_id`, `attempt`,
+`operation` and `idempotency_key`, and returns a whitelist of structured receipt
+metadata. It does not expose stdout/stderr, invoke a shell, retrieve
+credentials, inspect browser sessions or read/write Codex session files. A
+malformed request with a valid nonce consumes that nonce as well; this deliberate
+fail-closed behavior prevents an attacker who obtained a nonce from probing for
+a second accepted shape.
+
+Automatic pairing has a deliberate residual cost: a malicious local extension
+could imitate the public extension-id header and race the first pairing if it
+already has loopback access. The minimum guard is therefore a trusted installed
+extension, a real user activation in the ChatGPT content script, strict task
+block parsing, exact extension-origin/header agreement and a single-use pairing
+state. Page loads and background activity never pair, and the bridge never
+widens its port or accepts a fallback port.
 
 The real invoker runs `codex exec` with `--ephemeral`, so this handoff does not
 create or recover a persistent Codex session. Its stdin contains only the

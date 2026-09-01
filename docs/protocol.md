@@ -158,13 +158,13 @@ scripts):
 
 ```
 c2c extension start --workspace /path/to/workspace
-c2c extension nonce --workspace /path/to/workspace --json
 ```
 
-Paste the returned one-time `nonce` and the printed port into the minimal
-Chromium extension popup. The extension only scans `pre code` elements on
-`chatgpt.com` and `chat.openai.com` for this exact shape; no free-form prompt,
-URL, command, conversation id, cookie or token field is accepted:
+The bridge always binds to loopback port `62141`; a collision fails closed and
+never selects another port. The minimal Chromium extension has no port or nonce
+input. It only scans `pre code` elements on `chatgpt.com` and
+`chat.openai.com` for this exact shape; no free-form prompt, URL, command,
+conversation id, cookie or token field is accepted:
 
 ````
 ```c2c-task
@@ -183,19 +183,21 @@ APPROVAL_SUMMARY_HASH: be9086bb9f7ee43ac244a87053346f45f68fdf1329ca4fd9fa59aaeb6
 ```
 ````
 
-The user must click the injected button. The browser sends one POST to
-`http://127.0.0.1:<port>/v1/task/dispatch` with the nonce and the block. The
-bridge checks loopback origin, workspace, arm, operation, attempt and approval
-summary/hash fences, then invokes the same fixed `codex exec --ephemeral --json
---sandbox workspace-write --cd <workspace> -` command. The invoker receives the
-durable locally armed summary and instruction (plus a fixed safety suffix),
-never an unapproved or browser-supplied free-form prompt. It never uses
-`resume`, reads or writes Codex session data, enables an approval bypass, or
-accepts arbitrary shell input. The nonce is consumed before task validation and
-is never written to the runtime file; malformed authenticated input therefore
-also requires a fresh explicit nonce. The extension clears its local nonce after
-the request, including an ambiguous network result, so there is no automatic
-retry.
+The user must click the injected button. On that click, the extension verifies a
+trusted user activation and sends one origin-bound pairing request to
+`http://127.0.0.1:62141/v1/task/pair`, then immediately sends one dispatch POST
+with the returned one-time nonce and block. Pairing requires the extension
+origin, a matching extension-id header and the activation marker; a second
+pairing is rejected. The bridge then checks loopback origin, workspace, arm,
+operation, attempt and approval summary/hash fences, and invokes the same fixed
+`codex exec --ephemeral --json --sandbox workspace-write --cd <workspace> -`
+command. The invoker receives the durable locally armed summary and instruction
+(plus a fixed safety suffix), never an unapproved or browser-supplied free-form
+prompt. It never uses `resume`, reads or writes Codex session data, enables an
+approval bypass, or accepts arbitrary shell input. The nonce is memory-only and
+is consumed before task validation; malformed authenticated input therefore
+also cannot be retried. The extension keeps no nonce or port state and never
+automatically retries an ambiguous network result.
 
 Only a bounded structured result (status, receipt ids, test summary and changed
 file count) is returned to the page. Raw CLI output, prompts, paths, credentials

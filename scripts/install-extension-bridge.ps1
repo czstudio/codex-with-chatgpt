@@ -21,7 +21,7 @@ if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {
 }
 $nodePath = (Get-Command node -ErrorAction Stop).Source
 $taskName = "C2C Local Extension Bridge"
-$arguments = '"{0}" extension start --workspace "{1}" --port 0' -f $cliPath, $workspace
+$arguments = '"{0}" extension start --workspace "{1}"' -f $cliPath, $workspace
 $action = New-ScheduledTaskAction -Execute $nodePath -Argument $arguments -WorkingDirectory $workspace
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType InteractiveToken -RunLevel Limited

@@ -1,6 +1,7 @@
 "use strict";
 
 const NONCE_PATTERN = /^[A-Za-z0-9._-]{32,}$/;
+const BRIDGE_URL = "http://127.0.0.1:62141";
 
 function safeResult(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || value.ok !== true) return null;
@@ -25,18 +26,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: false, error: "SENDER_NOT_ALLOWED" });
     return false;
   }
+  if (message.userActivated !== true) {
+    sendResponse({ ok: false, error: "USER_ACTIVATION_REQUIRED" });
+    return false;
+  }
 
-  chrome.storage.local.get(["port", "nonce"], async (settings) => {
-    const port = Number(settings.port);
-    const nonce = typeof settings.nonce === "string" ? settings.nonce : "";
-    if (!Number.isInteger(port) || port < 1 || port > 65535 || !NONCE_PATTERN.test(nonce)) {
-      sendResponse({ ok: false, error: "BRIDGE_NOT_CONFIGURED" });
-      return;
-    }
+  (async () => {
+    const extensionId = chrome.runtime.id;
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/v1/task/dispatch`, {
+      // Pair only after a real click from the strict-task content script. The
+      // bridge binds the returned nonce to this extension origin and consumes
+      // it on the following dispatch; it is never stored in extension state.
+      const pairResponse = await fetch(`${BRIDGE_URL}/v1/task/pair`, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${nonce}` },
+        headers: {
+          "x-c2c-extension-id": extensionId,
+          "x-c2c-user-activation": "1"
+        }
+      });
+      const pairBody = await pairResponse.json().catch(() => null);
+      const nonce = pairBody && typeof pairBody.nonce === "string" ? pairBody.nonce : "";
+      if (!pairResponse.ok) {
+        sendResponse({ ok: false, error: safeError(pairBody) });
+        return;
+      }
+      if (!NONCE_PATTERN.test(nonce)) {
+        sendResponse({ ok: false, error: "INVALID_PAIRING" });
+        return;
+      }
+      const response = await fetch(`${BRIDGE_URL}/v1/task/dispatch`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${nonce}`,
+          "x-c2c-extension-id": extensionId
+        },
         body: JSON.stringify({ block: message.block })
       });
       const body = await response.json().catch(() => null);
@@ -48,11 +72,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse(result ? { ok: true, result } : { ok: false, error: "INVALID_BRIDGE_RESULT" });
     } catch {
       sendResponse({ ok: false, error: "BRIDGE_UNAVAILABLE" });
-    } finally {
-      // A nonce is one-use. Clear it even when the network outcome is
-      // ambiguous; retry requires a fresh explicit CLI read.
-      await chrome.storage.local.remove("nonce");
     }
-  });
+  })();
   return true;
 });

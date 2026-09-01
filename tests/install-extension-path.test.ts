@@ -54,4 +54,11 @@ describe("extension bridge installer paths", () => {
     expect(contents).toContain('$packageRoot = Split-Path -Parent $scriptRoot');
     expect(contents).toContain('$cliPath = Join-Path $packageRoot "dist\\cli\\index.js"');
   });
+
+  it("does not configure a drifting port in either startup script", () => {
+    const macos = fs.readFileSync(path.join(projectRoot, "scripts", "install-extension-bridge-macos.sh"), "utf8");
+    const windows = fs.readFileSync(windowsInstaller, "utf8");
+    expect(macos).not.toContain("--port");
+    expect(windows).not.toContain("--port");
+  });
 });

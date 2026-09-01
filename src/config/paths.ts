@@ -52,3 +52,5 @@ export function readJsonIfExists<T>(file: string): T | null {
 
 export const DEFAULT_PORT = 48765;
 export const DEFAULT_HOST = "127.0.0.1";
+/** Fixed loopback port used by the ChatGPT browser extension bridge. */
+export const EXTENSION_BRIDGE_PORT = 62_141;

@@ -1,5 +1,9 @@
 # Reverse wake inbox / local browser handoff implementation receipt
 
+> 历史记录：本文记录 2026-08-30 的手工 nonce 原始流程。当前固定端口与自动配对流程以
+> [`auto-pair-fixed-port-receipt.md`](auto-pair-fixed-port-receipt.md)、`docs/protocol.md`
+> 和 `docs/security.md` 为准。
+
 日期：2026-08-30
 工作树：`/private/tmp/c2c-reverse-wake-inbox`
 分支：`codex/reverse-wake-inbox`

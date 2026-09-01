@@ -5,16 +5,17 @@ import { CodexCliInvoker } from "../inbox/codex-invoker.js";
 import { TaskDispatcher, type CodexTurnInvoker } from "../inbox/task-dispatcher.js";
 import { TaskInboxError } from "../inbox/task-inbox.js";
 import { Workspace } from "../workspace/manager.js";
-import { DEFAULT_HOST } from "../config/paths.js";
+import { DEFAULT_HOST, EXTENSION_BRIDGE_PORT } from "../config/paths.js";
 import { VERSION } from "../version.js";
 import { TaskBlockError, parseTaskBlock } from "./task-block.js";
 import { clearExtensionRuntime, writeExtensionRuntime, type ExtensionRuntimeState } from "./runtime.js";
 
 const MAX_JSON_BYTES = "8kb";
-const EXTENSION_ORIGIN = /^chrome-extension:\/\/[a-z0-9_-]+$/i;
+const EXTENSION_ORIGIN = /^chrome-extension:\/\/([a-z0-9_-]+)$/i;
 
 export type ExtensionBridgeOptions = {
   workspaceRoot: string;
+  /** Fixed at EXTENSION_BRIDGE_PORT; retained as a guarded compatibility seam. */
   port?: number;
   host?: string;
   dispatcher?: TaskDispatcher;
@@ -54,24 +55,15 @@ export interface ExtensionBridge {
   close(): Promise<void>;
 }
 
-function listen(app: express.Express, host: string, preferredPort: number): Promise<{ server: Server; port: number }> {
+function listen(app: express.Express, host: string, port: number): Promise<{ server: Server; port: number }> {
   return new Promise((resolve, reject) => {
-    const tryListen = (port: number, allowFallback: boolean): void => {
-      const server = app.listen(port, host);
-      server.once("listening", () => {
-        const address = server.address();
-        const actual = typeof address === "object" && address ? address.port : port;
-        resolve({ server, port: actual });
-      });
-      server.once("error", (error: NodeJS.ErrnoException) => {
-        if (error.code === "EADDRINUSE" && allowFallback) {
-          tryListen(0, false);
-        } else {
-          reject(error);
-        }
-      });
-    };
-    tryListen(preferredPort, preferredPort !== 0);
+    const server = app.listen(port, host);
+    server.once("listening", () => {
+      const address = server.address();
+      const actual = typeof address === "object" && address ? address.port : port;
+      resolve({ server, port: actual });
+    });
+    server.once("error", (error: NodeJS.ErrnoException) => reject(error));
   });
 }
 
@@ -83,6 +75,11 @@ function isLoopback(req: Request): boolean {
 function allowedOrigin(origin: string | undefined): boolean {
   if (!origin) return true;
   return EXTENSION_ORIGIN.test(origin);
+}
+
+function extensionIdFromOrigin(origin: string | undefined): string | null {
+  if (!origin) return null;
+  return EXTENSION_ORIGIN.exec(origin)?.[1]?.toLowerCase() ?? null;
 }
 
 function bearer(req: Request): string {
@@ -138,6 +135,9 @@ function publicResult(result: Awaited<ReturnType<TaskDispatcher["dispatch"]>>): 
 export async function startExtensionBridge(opts: ExtensionBridgeOptions): Promise<ExtensionBridge> {
   const workspace = new Workspace(opts.workspaceRoot);
   const host = opts.host ?? DEFAULT_HOST;
+  if (opts.port !== undefined && opts.port !== EXTENSION_BRIDGE_PORT) {
+    throw new Error(`EXTENSION_PORT_FIXED:${EXTENSION_BRIDGE_PORT}`);
+  }
   if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
     throw new Error("The extension bridge only binds to loopback addresses.");
   }
@@ -154,11 +154,12 @@ export async function startExtensionBridge(opts: ExtensionBridgeOptions): Promis
   if (!/^[A-Za-z0-9._-]{32,}$/.test(nonce)) throw new Error("EXTENSION_NONCE_INVALID");
   const adminToken = `c2c_extension_admin_${randomBytes(24).toString("base64url")}`;
   let nonceConsumed = false;
+  let nonceIssued = false;
 
   const app = express();
   app.disable("x-powered-by");
 
-  const extensionGuard = (req: Request, res: Response, next: NextFunction): void => {
+  const extensionGuard = (req: Request, res: Response, next: NextFunction, requireOrigin = false): void => {
     if (!isLoopback(req)) {
       res.status(404).end();
       return;
@@ -169,16 +170,51 @@ export async function startExtensionBridge(opts: ExtensionBridgeOptions): Promis
       return;
     }
     const origin = req.get("origin");
-    if (!allowedOrigin(origin)) {
+    if ((requireOrigin && !origin) || !allowedOrigin(origin)) {
       res.status(403).json({ ok: false, error: "ORIGIN_NOT_ALLOWED" });
       return;
     }
     if (origin) {
       res.set("access-control-allow-origin", origin);
-      res.set("access-control-allow-headers", "authorization, content-type");
+      res.set("access-control-allow-headers", "authorization, content-type, x-c2c-extension-id, x-c2c-user-activation");
       res.set("access-control-allow-methods", "POST, OPTIONS");
       res.set("vary", "Origin");
     }
+    next();
+  };
+
+  const strictExtensionGuard = (req: Request, res: Response, next: NextFunction): void => {
+    extensionGuard(req, res, next, true);
+  };
+
+  const autoPairGuard = (req: Request, res: Response, next: NextFunction): void => {
+    strictExtensionGuard(req, res, () => {
+      const originExtensionId = extensionIdFromOrigin(req.get("origin"));
+      const suppliedExtensionId = req.get("x-c2c-extension-id")?.trim().toLowerCase();
+      if (!originExtensionId || !suppliedExtensionId || suppliedExtensionId !== originExtensionId) {
+        jsonError(res, 403, "EXTENSION_ID_MISMATCH");
+        return;
+      }
+      if (req.get("x-c2c-user-activation") !== "1") {
+        jsonError(res, 403, "USER_ACTIVATION_REQUIRED");
+        return;
+      }
+      next();
+    });
+  };
+
+  const dispatchNonceGuard = (req: Request, res: Response, next: NextFunction): void => {
+    if (nonceConsumed) {
+      jsonError(res, 409, "NONCE_REPLAYED");
+      return;
+    }
+    if (!sameSecret(bearer(req), nonce)) {
+      jsonError(res, 401, "INVALID_NONCE");
+      return;
+    }
+    // Consume before JSON parsing and task validation so every authenticated
+    // request, including malformed JSON, is one-shot.
+    nonceConsumed = true;
     next();
   };
 
@@ -194,23 +230,26 @@ export async function startExtensionBridge(opts: ExtensionBridgeOptions): Promis
     res.json({ service: "c2c-extension-bridge", version: VERSION, workspaceId: workspace.id, status: "ok" });
   });
 
-  app.options("/v1/task/dispatch", extensionGuard, (_req, res) => {
+  app.options("/v1/task/dispatch", strictExtensionGuard, (_req, res) => {
     res.status(204).end();
   });
 
-  app.post("/v1/task/dispatch", extensionGuard, express.json({ limit: MAX_JSON_BYTES }), async (req, res) => {
-    const providedNonce = bearer(req);
-    if (nonceConsumed) {
-      jsonError(res, 409, "NONCE_REPLAYED");
+  app.options("/v1/task/pair", strictExtensionGuard, (_req, res) => {
+    res.status(204).end();
+  });
+
+  app.post("/v1/task/pair", autoPairGuard, express.json({ limit: MAX_JSON_BYTES }), (_req, res) => {
+    if (nonceConsumed || nonceIssued) {
+      jsonError(res, 409, "PAIRING_CONSUMED");
       return;
     }
-    if (!sameSecret(providedNonce, nonce)) {
-      jsonError(res, 401, "INVALID_NONCE");
-      return;
-    }
-    // Consume before validating task data so an authenticated malformed request
-    // cannot be retried as a second handoff.
-    nonceConsumed = true;
+    // Pairing is a single-use capability handoff. The nonce remains memory-only
+    // and is consumed by the first authenticated dispatch request.
+    nonceIssued = true;
+    res.json({ ok: true, nonce });
+  });
+
+  app.post("/v1/task/dispatch", strictExtensionGuard, dispatchNonceGuard, express.json({ limit: MAX_JSON_BYTES }), async (req, res) => {
     if (!isObject(req.body) || Object.keys(req.body).length !== 1 || typeof req.body.block !== "string") {
       jsonError(res, 400, "INVALID_REQUEST");
       return;
@@ -251,7 +290,7 @@ export async function startExtensionBridge(opts: ExtensionBridgeOptions): Promis
     if (!res.headersSent) jsonError(res, 400, "INVALID_REQUEST");
   });
 
-  const { server, port } = await listen(app, host, opts.port ?? 0);
+  const { server, port } = await listen(app, host, EXTENSION_BRIDGE_PORT);
   const startedAt = new Date().toISOString();
   if (opts.persistRuntime !== false) {
     const runtime: ExtensionRuntimeState = {

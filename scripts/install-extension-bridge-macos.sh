@@ -81,8 +81,6 @@ cat > "$plist" <<EOF
     <string>start</string>
     <string>--workspace</string>
     <string>$workspace_xml</string>
-    <string>--port</string>
-    <string>0</string>
   </array>
   <key>WorkingDirectory</key><string>$workspace_xml</string>
   <key>EnvironmentVariables</key>

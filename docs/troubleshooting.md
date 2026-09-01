@@ -81,6 +81,11 @@ Handled automatically: an existing healthy bridge for the same workspace is
 reused; anything else makes the bridge pick a free port. Configuration follows
 automatically.
 
+The browser extension bridge is separate: it always uses loopback port `62141`.
+If that port is occupied, startup fails closed so the extension cannot silently
+dispatch to a different process. Stop the known occupant or choose another
+workspace/process arrangement before retrying.
+
 ### Reading a file returns ACCESS_DENIED_SENSITIVE_FILE
 Working as intended: `.env`, keys, credentials and anything matched by
 `.c2cignore` are never readable through ChatGPT. `.env.example` is allowed.

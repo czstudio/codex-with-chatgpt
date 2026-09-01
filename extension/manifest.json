@@ -1,10 +1,9 @@
 {
   "manifest_version": 3,
   "name": "C2C Local Codex Handoff",
-  "version": "0.1.0",
-  "description": "Explicitly send a strict C2C task block to the local Codex bridge.",
-  "permissions": ["storage"],
-  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "version": "0.2.0",
+  "description": "Explicitly send a strict C2C task block to the local Codex bridge with one-click pairing.",
+  "host_permissions": ["http://127.0.0.1:62141/*"],
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],

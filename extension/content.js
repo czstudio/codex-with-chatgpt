@@ -102,10 +102,11 @@
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "Send to local Codex";
-    button.addEventListener("click", () => {
+    button.addEventListener("click", (event) => {
       button.disabled = true;
       button.textContent = "Sending…";
-      chrome.runtime.sendMessage({ type: "dispatchTask", block }, (response) => {
+      const userActivated = event.isTrusted === true && Boolean(navigator.userActivation && navigator.userActivation.isActive);
+      chrome.runtime.sendMessage({ type: "dispatchTask", block, userActivated }, (response) => {
         const error = chrome.runtime.lastError;
         const result = document.createElement("pre");
         result.dataset.c2cResult = "1";
