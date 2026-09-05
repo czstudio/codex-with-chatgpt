@@ -9,6 +9,7 @@ import { adminFetch, ensureBridge, stopBridge } from "../process/daemon.js";
 import { Workspace } from "../workspace/manager.js";
 import { AuthStore } from "../auth/store.js";
 import { appendCheckpointRecord, appendExecutionRecord, completionEvidence } from "../execution/records.js";
+import { plannerRequestSchema, validatePlannerReply } from "../execution/planner-reply.js";
 import { detectTunnelBinaries } from "../tunnel/detect.js";
 import {
   chooseQuickTunnel,
@@ -1134,6 +1135,30 @@ program
     if (opts.json) say(JSON.stringify({ ok: result.pass, enforcement: "c2c-protocol-fail-closed", authority: "not-business-state", ...result }));
     else say(result.pass ? "DONE 证据完整（仅本地审计，不改变业务状态）" : `BLOCKED：证据不完整 ${JSON.stringify(result.checks)}`);
     if (!result.pass) process.exitCode = 2;
+  });
+
+program
+  .command("validate-reply")
+  .description("Validate one completed planner reply against a local request; never execute it")
+  .requiredOption("--request <file>", "local request JSON")
+  .requiredOption("--reply <file>", "single completed assistant reply")
+  .option("--json", "machine-readable output", false)
+  .action((opts: { request: string; reply: string; json: boolean }) => {
+    try {
+      for (const file of [opts.request, opts.reply]) {
+        if (!fs.statSync(file).isFile() || fs.statSync(file).size > 65536) throw new Error("INPUT_NOT_BOUNDED_FILE");
+      }
+      const expected = plannerRequestSchema.parse(JSON.parse(fs.readFileSync(opts.request, "utf8")));
+      const reply = validatePlannerReply(fs.readFileSync(opts.reply, "utf8"), expected);
+      // Do not echo untrusted reply text, test commands or file paths to the shell.
+      const result = { ok: true, authority: "proposal-only", state: reply.state,
+        taskId: reply.taskId, requestId: reply.requestId, iteration: reply.iteration,
+        next: reply.state === "DONE" ? "verify-local-evidence" : reply.state === "PLAN" ? "local-adoption-review" : reply.state === "BLOCKED" ? "resolve-blocker" : "request-plan" };
+      say(opts.json ? JSON.stringify(result) : `${reply.state}: ${result.next}`);
+    } catch {
+      say(opts.json ? JSON.stringify({ ok: false, error: "PLANNER_REPLY_REJECTED", next: "inspect-local-request-and-reply" }) : "Planner reply rejected; inspect local request and reply.");
+      process.exitCode = 2;
+    }
   });
 
 const tunnelCmd = program.command("tunnel").description("Choose or inspect the public connection for this workspace");

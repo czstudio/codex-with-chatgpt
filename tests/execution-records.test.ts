@@ -116,6 +116,21 @@ describe("task-bound execution audit", () => {
     expect(completionEvidence("ws", "task-b", 1).pass).toBe(false);
   });
 
+  it("rejects unresolved issues, pre-execution DONE and obsolete iteration completion", () => {
+    const execution = { taskId: "a", iteration: 1, changedFiles: 0, tests: "1 passed", exitStatus: "ok", timestamp: "2026-09-05T00:00:00Z" };
+    const done = { kind: "checkpoint" as const, taskId: "a", iteration: 1, state: "DONE", summary: "reviewed", knownIssues: [], nextExpectedStep: "report", timestamp: "2026-09-05T00:01:00Z" };
+    appendExecutionRecord("issues", execution);
+    appendCheckpointRecord("issues", { ...done, knownIssues: ["Missing acceptance test"] });
+    expect(completionEvidence("issues", "a", 1).pass).toBe(false);
+    appendCheckpointRecord("early", done);
+    appendExecutionRecord("early", execution);
+    expect(completionEvidence("early", "a", 1).pass).toBe(false);
+    appendExecutionRecord("stale", execution);
+    appendCheckpointRecord("stale", done);
+    appendExecutionRecord("stale", { ...execution, iteration: 2, exitStatus: "failed" });
+    expect(completionEvidence("stale", "a", 1).pass).toBe(false);
+  });
+
   it("rejects credential-like content and unknown schemas", () => {
     expect(() => appendCheckpointRecord("ws", {
       kind: "checkpoint", taskId: "task-a", iteration: 1, state: "BLOCKED",

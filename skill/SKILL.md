@@ -1,423 +1,116 @@
 ---
 name: codex-with-chatgpt
 description: >
-  Use ChatGPT (web) as the planning and review brain for Codex coding sessions,
-  while Codex keeps full execution ownership. Use when the user says
-  "使用 Codex with ChatGPT ..." / "Set up Codex with ChatGPT" / "用 ChatGPT 规划",
-  when they ask to connect ChatGPT to the current workspace, disconnect it,
-  or run a task through the ChatGPT planning loop.
+  Coordinate ChatGPT Web brainstorming, deep research, planning and review with
+  local Codex execution, feeding results back until acceptance. Use for
+  codex-with-chatgpt, 网页版与本地 GPT 循环, or connecting and repairing C2C.
 ---
 
 # Codex with ChatGPT
 
-ChatGPT thinks. Codex works.
+网页 ChatGPT 负责头脑风暴、研究、计划和审查；本地 Codex 负责采纳判断、执行、
+测试和反馈。默认由当前 Codex 桌面任务主持循环。用户说“本地 GPT app”且上下文
+是 Codex 时按 Codex app 处理；若明确指定另一个应用，先核验它的可用执行接口。
 
-You (Codex) own execution: editing, shell, git, tests, recovery.
-ChatGPT owns high-level reasoning: understanding, planning, review, debug strategy.
-The C2C Bridge gives ChatGPT read-only MCP access to the current workspace, so
-control messages between you and ChatGPT stay tiny (< 1 KB) — ChatGPT pulls
-whatever data it needs by itself.
+CLI: `node __C2C_CHECKOUT__/bin/c2c.js`。工作区参数 `-w` 指向用户项目或其隔离
+工作树，不能默认指向 C2C 源码。完整协议与 JSON 示例见
+`__C2C_CHECKOUT__/docs/planner-loop.md`，执行循环前读取。
+旧协议和可选手动扩展见 `__C2C_CHECKOUT__/docs/protocol.md`。
+下文 `c2c` 均指上述绝对路径 CLI，不依赖全局同名命令已经升级。
 
-**Golden rules**
+## 先选实际可用的通道
 
-1. NEVER paste file contents, diffs, or logs into ChatGPT. ChatGPT reads them through MCP.
-2. NEVER show the user technical internals (MCP, OAuth, PKCE, tunnel, ports, localhost).
-   Speak in terms of "连接 ChatGPT / 安全连接 / 配对".
-3. The pairing code is the ONLY credential you may ever type into a browser.
-   Never touch OAuth tokens, cookies, or session storage.
-4. If something fails, run `c2c doctor` and repair silently. Only involve the user
-   for logins, CAPTCHA, 2FA, or explicit consent screens — and then give them ONE action.
-5. ALWAYS use the built-in in-app browser (iab) for every ChatGPT step.
-   Follow **In-app browser (ChatGPT)** below. NEVER Computer Use (no
-   screenshot-click). NEVER launch or control a third-party/external browser
-   (Chrome, Safari, Edge…), and never use `open <url>` to hand off to one.
-   - The ONLY exception: the user explicitly says the Cloudflare login must use
-     their own browser session — that single Cloudflare login step may go through
-     their browser; everything else stays in the built-in browser.
-   - If the user asks to run ChatGPT in their own browser, refuse politely and
-     explain: "Codex 需要持续调用 ChatGPT 和配置连接，这会频繁操作页面，可能影响
-     你浏览器的正常使用。ChatGPT 只能跑在内置浏览器里。" Only if the user replies
-     with an explicit "我愿意承担影响" may you proceed in their browser; otherwise
-     keep ChatGPT in the built-in browser, every time they ask.
-6. Reuse ONE ChatGPT conversation per workspace (see Conversation management).
-   Never silently start a new chat. Each workspace also has exactly ONE ChatGPT
-   connector. Do not create a second connector for the same workspace. Other
-   workspaces may have their own connectors — never edit those.
-7. After first-time setup, never ask the user to approve writing C2C's local
-   settings directory. Run `c2c sandbox-allow --json` (idempotent). If it fails
-   with EPERM / Operation not permitted, request elevated permissions and retry
-   ONCE. After `{ "alreadyAllowed": true }` or `{ "added": true }`, stay silent.
-8. ChatGPT pages: only the URLs in **In-app browser (ChatGPT)**. Never start
-   from chatgpt.com and click through menus.
-9. **Doctor gate.** After `c2c doctor --json`, do not `goto` ChatGPT and do not
-   send `[C2C]` until local is green — except the reconnect settings pages when
-   `chatgptRepair.needed` is true. Not green:
-   - `report.bridge.ok` is not true
-   - `report.mcp.ok` is not true (unauthenticated local `/mcp` must be 401)
-   - sandbox / state-dir write failed (EPERM)
-   - this workspace used to have a public URL and the tunnel is down
-   - `chatgptRepair.needed` is true (fix the connector first, then doctor again)
-   - `namedRepair.needed` is true (user must login to Cloudflare, then doctor again.
-     Do not Delete the ChatGPT connector — the address did not change)
-   A ChatGPT-side 401 after a sent message is different: repair then, do not
-   treat it as permission to skip this gate next time.
-10. **Checkpoint, not a second state machine.** Before compaction, handoff, or a
-    conversation switch, append a compact task-bound checkpoint. It is a recovery
-    hint only; the project Controller remains the sole business-state authority.
-11. **Evidence before DONE.** A ChatGPT DONE is not sufficient by itself. Record
-    the execution and tests, append the reviewed DONE checkpoint, then run `c2c gate`.
-    A failed gate must be reported as BLOCKED, never promoted to completion.
+1. **桌面主持循环（默认）**：同一个活跃 Codex 任务控制一个 ChatGPT 对话，发送
+   请求、等待回复、执行、提交结果、继续审查。无需每轮让用户复制粘贴或确认。
+2. **网页手动派发扩展（现有可选功能）**：本地预先 arm，再由用户点击派发。
+   当前扩展把结果展示在页面，未实现自动填入 ChatGPT 输入框并发送下一轮。
+   不得把这个模式报告成无人值守 loop，不能自动点击代替其可信用户动作。
+3. **后台反向唤醒**：需要独立可用的网页传输和本地任务唤醒端点。MCP 工具返回、
+   本地 JSON 文件或 desktop-bus 事件都不证明 ChatGPT 开始了下一轮。
+   不静默改用 `codex exec --ephemeral` 冒充继续当前桌面任务。只有实际启用、
+   授权并验证同一目标的收发端后才能报告支持。
 
-## In-app browser (ChatGPT)
+保持一个 workspace 对应一个 ChatGPT conversation，一个目标只有一个执行 owner。
+先读 `c2c session -w <ws> --json` 和最近任务检查点。已有在运行的请求不重复发送。
+不创建新的 Codex 任务来冒充恢复；工具可用时用原任务的 read/wait/send 接口。
 
-Official skill: `control-in-app-browser`. These C2C rules override defaults
-that close the tab, hide the window, or stall on the settings page.
+## 浏览器与连接
 
-1. **Surface.** Once per Codex session: `setupBrowserRuntime()`, then
-   `const iab = await agent.browsers.get("iab")`. Reuse `iab`. Do not re-read
-   `documentation()` if it is already bound. Never `getDefault()`, `getForUrl()`,
-   or Computer Use.
+- 使用当前环境暴露的浏览器接口。当前桌面可用 `mcp__cua_repl.js`：先列出已有
+  iab 标签，再用实际 id 复用；无对应标签才 `cua.createBrowserTab("iab", url,
+  { visible: true })`。接口文档以工具实际返回为准；不调用不存在的 bootstrap。
+- DOM/AX 读取优先。只通过浏览器工具执行交互，不读取 Cookie、认证存储、浏览器
+  配置、隐藏应用状态，不调用 ChatGPT 私有 HTTP 接口。不用浏览器重读 MCP
+  已提供的文件。默认内置浏览器；用户明确指定浏览器时遵从其选择。
+- 一次导航或发送超时后，找回同一标签检查实际状态。不得盲目刷新、重发或新建聊天。
+  服务持续不可用时保存检查点，报告具体工具或登录阻塞，不绕过验证。
+- 保留可续接标签；在需要下一轮恢复时标记 handoff。不要关闭用户标签。
+- 仅讨论公共目标、头脑风暴或公共资料研究时，可先运行不连接本地仓库的网页回合。
+  不把仓库文件、diff、日志或秘密放进消息；代码审查必须先核验数据通道。
+- 本地数据通道使用现有 workspace connector。先 `c2c tunnel status -w <ws> --json`；
+  已有选择与配对不重复设置。需要代码访问时运行 `c2c doctor -w <ws> --json` 并
+  检查 bridge 与 MCP 结果；`doctor` 会启动/修复服务，修改前确认目标范围。
+  ChatGPT 内实际成功调用 workspace_info 且工作区吻合才算数据通道验证。
+- 首次建立公网连接/连接器按用户授权及当前工具确认规则执行；已有范围内维修
+  可继续。登录、验证码和必须用户执行的同意界面交还用户；不输出令牌或完整
+  doctor 认证结果。只有 pairing code 可用于预期配对页面。
+- 连接器地址变化时先核对现有配置和当前 UI 支持的修复动作，限定到该工作区。
+  不凭旧版说明删除连接器、清理会话、自动 stash/pull 或改全局配置。
 
-2. **One tab.** Create the ChatGPT tab once (`tabs.new()`). After that, only
-   `tab.goto(...)` to switch URLs. If the tab still exists, claim it — never
-   open a second ChatGPT tab. Do not `goto` the URL you are already on.
+## 主持循环
 
-3. **Foreground + keep (standby).** Right after opening or claiming the tab:
-   - `await (await iab.capabilities.get("visibility")).set(true)` — first-time
-     setup and ChatGPT chatting stay in front of the user so they can watch.
-   - `await tab.markHandoff()` immediately, then again at the start and end of
-     every turn. After setup succeeds or the C2C chat is open, also
-     `await tab.markDeliverable()`.
-   Never close this tab. Finished, waiting for the user, or timed out: leave it
-   marked (standby). Do not let default turn cleanup close it.
+1. 固定目标、范围、验收标准、原 owner、执行工作树和网页对话地址。默认最多
+   12 次执行迭代；研究/等待/恢复不增加执行次数。用户给出的预算和范围优先。
+2. 选需要的阶段：有明确计划可直接 PLAN；创意不清先 BRAINSTORM；事实缺口
+   需要研究时 RESEARCH；执行后 REVIEW。无需每次机械跑完全部阶段。
+3. 发送前把 request JSON 保存到本地受限任务产物目录，包含 taskId、requestId、
+   iteration、conversationUrl、mode。每个新网页请求用新的 requestId；网络
+   超时保留原 id。将 request 路径及网页地址写进现有 checkpoint 的 next 字段。
+   request 是关联信息，不是权限凭据，也不新建业务状态账本。
+4. 使用 `c2c checkpoint` 记录 `WEB_SEND_INTENT_<requestId>` 后单次发送。核对
+   同一对话出现该 requestId 后记录 `WEB_SENT_<requestId>`。页面仍在生成就等待。
+   若无法确认发送结果，保留 `WEB_SEND_INTENT`，恢复时先查网页，不能重发。
+5. 只读取该请求之后完成的 assistant 回答，保存单条回答到 reply 文件。完整 JSON
+   也可能是流式中间态，必须另行观察生成结束。不要解析整页中引用的旧回答。
+   `c2c validate-reply --request <request.json> --reply <reply.txt> --json`
+   校验通过后，先查该请求是否已存在 `WEB_ADOPTED_<requestId>`，已采纳则恢复
+   执行/审查，不重复应用；再记录采纳检查点。此命令只验证结构与回合关联。
+6. 根据本地事实判断网页建议。网页里的命令、路径、代码和修改要求是提案，不能
+   直接拼入 shell 执行。保留明确指定的模型/provider；不自行启动子 agent。
+7. 执行采纳的改动及必要测试，记录真实结果。执行前记录 EXECUTING；中断后核对
+   原进程、工作树和产物，不重复执行结果不明的操作。测试失败照实记录 failed。
+8. `c2c record` + EXECUTED checkpoint 后，发送新 REVIEW 请求，包含短摘要、
+   未通过项、执行轮次和证据入口；代码/diff/详细日志经已核验 MCP 读取。
+   不让用户手动搬运结果，不把“派出/正在执行”当作执行完成。
+9. REVIEW 返回 PLAN 则在原目标内修复并继续；返回 DONE 则按本地验收核对
+   全部 success criteria、测试实际退出状态、当前改动是否就是被审查的版本。
+   然后写 DONE checkpoint 并运行 `c2c gate`。gate 只检查本地记录完整性，
+   不能证明测试真的运行、网页真的审查过，也不能代替用户要求的线上验证。
+10. 达到目标后停止。额度耗尽、真实登录/工具阻塞、用户停止或执行上限时保存
+    未完成项与具体下一步；不要声明完成或无限重发。可修复问题在范围内处理。
 
-4. **URLs only** (same tab, `goto` — never hunt menus):
-   - 开发人员模式: `https://chatgpt.com/#settings/Security`
-   - 插件总管: `https://chatgpt.com/plugins`
-   - 加插件: `https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins`
-   - 新对话 (only if no saved session): `https://chatgpt.com/`
-   - Saved C2C chat: the URL from `c2c session`
-   Never click Reconnect / Refresh on an existing connector. The old address is
-   dead and that page hangs on "This site cannot be reached". When the address
-   changed: Delete THIS workspace's `connectorName` only, then create it again
-   via the 加插件 URL (same name, new Server URL).
+## Deep Research 和长等待
 
-5. **Do not wait for 8 tools** on the settings page. "Connected" / authorize
-   success / pairing accepted is enough. Confirm tools in the conversation with
-   `workspace_info`.
+用户指定 Deep Research 时，在可见 UI 核验该能力并实际选中后才称已启动。
+写了“deep research”几个字或做了普通联网搜索不算使用该功能。不切换用户
+指定的模型。功能不可用则报告，不静默以 API 调用替代订阅网页版。
 
-6. **Batch.** Fill a known form in one Playwright / `js` script when you can.
-   After an action, one cheap DOM check. Do not screenshot-poll.
+研究只使用读取能力；等完整报告和来源出现后，回到普通规划回合，请 ChatGPT
+把报告转成可执行 PLAN。保留报告链接/出处、假设、未解决问题，原目标不变。
+先核验来源再将事实写入项目文档；结构检查通过不代表引用真实支持结论。
 
-7. **One conversation.** The first ChatGPT chat is the C2C conversation. Send
-   the boot prompt and the workspace_info check there. Save that URL. Do not
-   open a throwaway verify chat and later another C2C chat.
+等待优先完成独立工作；需要观察网页时用低成本 DOM/AX 状态、逐步退避至约
+60 秒，不截图短轮询、不用一条五分钟阻塞调用。没有状态变化不写重复 checkpoint。
+需要跨 turn 自动续接时，按用户已有 loop 授权用当前可用的 heartbeat 工具，保存
+原任务、网页地址、待收 requestId、下一步和静默规则；无端点则报告不支持。
+heartbeat 只负责重新进入检查流程，不能宣称它已唤醒网页。不要创建重复监控。
 
-8. **Wait for a ChatGPT reply (do not hold one long browser wait).** After you
-   send INIT, EXECUTED, boot, or the workspace_info check: `markHandoff`, keep
-   the tab foreground, and stay in this same task. Do not `waitFor` 5 minutes
-   and do not screenshot-poll. Every 20–30 seconds, one cheap DOM check:
-   - still generating → wait again (do not type, do not resend);
-   - `STATE: PLAN` / `DONE` / `BLOCKED` / the verify workspace name → read it
-     and continue the existing protocol;
-   - visible error → repair; do not start a new chat.
-   A browser/js timeout is not failure. Claim the same tab, read the page, keep
-   standby. If ChatGPT is still thinking, keep polling. Never open a second
-   tab and never resend INIT/EXECUTED just because a wait timed out.
+## 安装更新与断开
 
-## Locations
+修改这个 Skill 时先备份本机安装副本。源码在独立工作树验证并 build，安装时
+只替换该 Skill，展开 `__C2C_CHECKOUT__` 为实际源码绝对路径。不要自动更新
+服务启动路径、重启生产 connector、覆盖别人 dirty tree 或清理历史数据。
+未 build 时用现有 package manager 和 lockfile，避免依赖全局 corepack 必然存在。
 
-- The codex-with-chatgpt checkout lives at: `__C2C_CHECKOUT__`
-- CLI: run `node __C2C_CHECKOUT__/bin/c2c.js <command>`
-  (or `c2c <command>` if globally linked). All commands support `--json` for parsing.
-- If the checkout has no `node_modules` or no `dist/`, first run
-  `corepack pnpm install && corepack pnpm build` inside it.
-- Always pass `-w <workspace root>` (the project the user is working on, NOT the c2c repo).
-
-## Daily update check
-
-At the START of every workflow below (before anything else), run these two
-commands (both are cheap / cached; never mention them unless an update exists):
-
-1. `c2c update-check --json`
-2. `c2c sandbox-allow --json` — writes the C2C state directory into Codex's
-   sandbox `writable_roots` (macOS: `~/Library/Application Support/codex-with-chatgpt`;
-   Windows: `%LOCALAPPDATA%\codex-with-chatgpt`; config file is
-   `~/.codex/config.toml` on both, or `%USERPROFILE%\.codex\config.toml` on Windows).
-   If already allowlisted, this is a no-op and does not trigger elevation.
-
-- `{ "updateAvailable": false }` → continue silently. Never mention the check.
-- `{ "updateAvailable": true }` → tell the user one line:
-  "检测到 Codex with ChatGPT 有新版本，我先更新一下（约 1 分钟），随后继续你的任务。"
-  Then run the update workflow below, and CONTINUE the original task afterwards.
-
-## Workflow: update（"更新 Codex with ChatGPT"，or triggered by the daily check）
-
-Inside the checkout directory (see Locations):
-
-1. `git pull --ff-only` (if it fails due to local edits: `git stash && git pull --ff-only`).
-2. `corepack pnpm install && corepack pnpm build`.
-3. Re-install the Skill: copy `skill/SKILL.md` to
-   `~/.codex/skills/codex-with-chatgpt/SKILL.md`, then fix the "checkout lives at:"
-   line in the copy to the actual checkout path.
-4. `c2c sandbox-allow --json` (so existing installs pick up the sandbox allowlist),
-   then `c2c restart -w <workspace>` so the bridge runs the new code, then
-   `c2c update-check --force --json` to refresh the cache (should now report up to date).
-5. Tell the user "✓ 已更新到最新版本" — then resume whatever task triggered this.
-   (The updated SKILL.md takes effect from the next Codex session; that's expected.)
-
-## Connection choice (once per workspace)
-
-Ask this **before** the public address exists (`c2c setup` / first `doctor --fix`
-that starts a tunnel). Do not mention tunnels, wrangler, DNS, or hostnames.
-Speak only of 临时地址 / 固定域名 / 登录 Cloudflare.
-
-1. `c2c tunnel status -w <workspace> --json`
-2. If `needsChoice` is false: do not ask again.
-3. If `needsChoice` is true: tell the user exactly `userPrompt` and wait.
-   - 没有账号 / 没有域名 / 临时 / 不用 →
-     `c2c tunnel choose -w <ws> --mode quick --json`
-   - 有域名（例如 example.com）→ first tell them `loginPrompt`, then
-     `c2c tunnel choose -w <ws> --mode named --zone <domain> --json`.
-     This may open the user's own browser (the Cloudflare exception in
-     Golden rule 5). Wait until the command finishes.
-     If they said they have an account but gave no domain: ask once for the
-     domain. If the command returns `need: "zone"`, ask once and retry.
-     If `fallback` is true: tell them `userMessage` and continue on the
-     temporary address. Do not retry named unless they ask.
-4. Never put connection credentials in the project. The CLI stores them in
-   the C2C state directory.
-
-## Workflow: first-time setup（"使用 Codex with ChatGPT 完成首次配置"）
-
-1. Detect prerequisites yourself: `node --version` (>= 20), and check `cloudflared`.
-   - If cloudflared is missing on macOS run `brew install cloudflared`; on Windows use
-     `winget install Cloudflare.cloudflared`. Do this yourself; don't ask.
-2. If the c2c repo has no `node_modules`, run `pnpm install && pnpm build` in it.
-3. Run `c2c sandbox-allow --json`, then **Connection choice**, then
-   `c2c setup -w <workspace> --json`.
-   `sandbox-allow` edits Codex `config.toml` only — it adds C2C's state directory
-   to `[sandbox_workspace_write].writable_roots` so later chats can write logs
-   without elevation. If the write is denied, request approval and retry once.
-   → returns `{ mcpUrl, pairingCode, workspaceName, connectorName, ... }`.
-   `connectorName` is this workspace's plugin title (legacy installs stay
-   `Codex with ChatGPT`; additional workspaces get `Codex with ChatGPT · <name>`).
-   Pairing codes expire in ~5 minutes: run `c2c pair --json` for a fresh one if you're slow.
-4. Open ChatGPT on the ONE iab tab (see **In-app browser**). Foreground +
-   markHandoff immediately. Same tab, `goto` only:
-   - 开发人员模式: `https://chatgpt.com/#settings/Security`
-     Enable 开发人员模式 ("Developer mode") if it is off.
-   - 已有该 `connectorName`: `https://chatgpt.com/plugins` — Delete it (never
-     Reconnect). Then `goto` the 加插件 URL below.
-   - 还没有 / 刚删掉: `https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins`
-     Operate ONLY on `connectorName` from step 3:
-      - If that exact name exists: Delete it, then create it again. Never
-        Reconnect, never edit-in-place, never open the old Server URL.
-      - If it does not exist: create one with that exact name.
-      - Never rename, delete, or edit a connector that belongs to another workspace.
-      - Description: `Securely connect ChatGPT to the current Codex workspace for planning and review.`
-      - Server URL: the `mcpUrl` from step 3
-      - Authentication: OAuth
-     Fill the known form in one script when you can. Then Connect / Authorize
-     and type the pairing code. As soon as it shows Connected / authorized /
-     pairing accepted, continue — do NOT wait for 8 tools on this page.
-5. Same tab: `goto` `https://chatgpt.com/` (this IS the C2C conversation, not a
-   throwaway). Send the boot prompt from `docs/protocol.md` §Boot Prompt, then
-   (same chat) send:
-   `Use the "<connectorName>" connector: call workspace_info and read hello-style top-level file. Reply with the workspace name.`
-   Confirm the reply matches `workspaceName` (wait per **In-app browser** §8).
-   Save the chat URL with `c2c session set` (see Conversation management).
-   markDeliverable.
-6. Report to the user exactly in this shape (no internals):
-
-```
-Codex with ChatGPT
-
-✓ 当前项目已识别
-✓ Workspace Bridge 已启动
-✓ 安全连接已建立
-✓ ChatGPT 已连接
-✓ 文件读取测试通过
-
-Ready.
-```
-
-If a login wall appears (ChatGPT, Cloudflare): stop, tell the user the ONE thing
-to do ("请登录 ChatGPT，完成后告诉我'好了'"), then continue.
-
-## Conversation management (one chat per workspace)
-
-The workspace has ONE long-lived C2C conversation in ChatGPT. Do not open a new
-chat per task or per Codex session.
-
-- **Find it**: `c2c session -w <ws> --json` → `{ session: { url, taskId, ... } }`.
-  If a session exists, `goto` that URL on the same iab tab (foreground +
-  markHandoff) and continue there.
-- **Save it**: right after creating a new C2C chat (boot prompt sent), read the
-  conversation URL from the iab address bar (visible UI state only)
-  and run `c2c session set -w <ws> --url <url> --title "C2C <workspace name>"`.
-- **Update it**: after each EXECUTED/DONE, run
-   `c2c session set -w <ws> --task <id> --iteration <n> --state <STATE>` and append
-   `c2c checkpoint -w <ws> --task <id> --iteration <n> --state <STATE> --summary "..." --next "..."`.
-- **Switch it** ONLY when (a) the user explicitly asks for a new chat, or
-  (b) the current chat has become so long it visibly lags. When switching:
-  1. Same iab tab: `goto` `https://chatgpt.com/`, send the boot prompt.
-  2. Immediately send a HANDOFF message (template in `docs/protocol.md`) —
-     a short brief of: original goal, iterations so far, what is already DONE,
-     current state, known issues, and the next expected step. The new chat must
-     be able to continue the task without re-asking anything; it re-reads code
-     via MCP, so never paste files into the handoff.
-  3. `c2c session set` with the new URL (this overwrites the old one).
-- If the saved chat 404s or was deleted, treat it as a switch: new chat + boot
-  prompt + HANDOFF reconstructed from `c2c session get` and recent
-  `execution_summary` records.
-
-## Workflow: coding task（"使用 Codex with ChatGPT 完成 XXX"）
-
-Protocol states: INIT → PLAN → EXECUTING → EXECUTED → REVIEW → (PLAN | DONE | BLOCKED).
-All control messages start with `[C2C]`. Keep Codex→ChatGPT messages under 1 KB.
-ChatGPT's replies are expected to be substantive (see step 3). Docs: `docs/protocol.md`.
-
-0. `c2c tunnel status -w <workspace> --json`. If `needsChoice`, follow
-   **Connection choice** first (existing installs: ask once, then remember).
-   Then `c2c doctor -w <workspace> --json` (auto-repairs). **Doctor gate:** if local
-   is not green, do not open ChatGPT and do not send INIT. If
-   `namedRepair.needed` is true, tell the user `namedRepair.userMessage`, run
-   `c2c tunnel login --json` (their browser; Cloudflare exception), then doctor
-   again. If `chatgptRepair.needed` is true, tell the user `chatgptRepair.userMessage`
-   (one paragraph, no internals), run **Workflow: reconnect after address
-   reclaim**, then doctor again and only continue when the gate is green.
-   Generate task id: `c2c_` + 4 random hex chars.
-1. Open the saved C2C conversation on the same iab tab (`c2c session --json`);
-   only `goto` `https://chatgpt.com/` if none is saved. Foreground + markHandoff.
-   On a NEW conversation first send the boot prompt from
-   `docs/protocol.md` §Boot Prompt, then save the session URL. Do not use the
-   browser to re-read code MCP already provides. After sending a control
-   message, wait per **In-app browser** §8.
-2. Send INIT with the user's goal:
-
-```
-[C2C]
-STATE: INIT
-TASK_ID: c2c_f81a
-ITERATION: 0
-
-GOAL:
-<user's goal, one paragraph>
-
-INSTRUCTION:
-Inspect the connected workspace through the Codex with ChatGPT MCP connector.
-Produce a C2C PLAN message.
-```
-
-3. Wait for ChatGPT's `STATE: PLAN` reply (**In-app browser** §8 — short DOM
-   checks, same tab; do not treat a 5-minute browser timeout as failure).
-   Read GOAL/ACTIONS/TESTS/SUCCESS_CRITERIA.
-   A good PLAN also carries RATIONALE and concrete natural-language edit
-   suggestions (which file, what to change, why). If the reply is a bare
-   one-liner with no rationale or file-level guidance, ask once:
-   "Please expand the plan with rationale and concrete per-file suggestions."
-4. Execute the plan yourself with your own harness (your tools, your judgment;
-   ChatGPT does not micro-manage tool calls).
-5. Record the execution so ChatGPT can read it via MCP:
-   `c2c record -w <ws> --task c2c_f81a --iteration 1 --changed-files "src/a.ts,src/b.ts" --tests "27 passed" --exit-status ok`
-6. Send EXECUTED (no diffs, no logs):
-
-```
-[C2C]
-STATE: EXECUTED
-TASK_ID: c2c_f81a
-ITERATION: 1
-
-RESULT:
-Execution finished.
-
-CHANGED_FILES:
-4
-
-TESTS:
-27 passed
-
-Please independently inspect the workspace and current git diff through MCP.
-```
-
-7. ChatGPT reviews via MCP (git_diff, read_file, test_status) and replies
-   DONE / PLAN (next iteration) / BLOCKED.
-8. Loop. Respect maxIterations (`.c2c.json`, default 12). At the limit, pause and ask
-   the user: "已完成 12 轮协作，仍有未解决问题，是否继续？"
-9. On DONE: append a DONE checkpoint, run
-   `c2c gate -w <ws> --task <id> --iteration <n> --json`, and only summarize
-   completion when it returns `ok: true`. This checks local evidence completeness;
-   it does not change or replace the project's authoritative business state.
-10. On BLOCKED: read ChatGPT's reason, fix what you can, or surface the single
-    decision the user must make.
-
-## Workflow: disconnect（"断开 ChatGPT"）
-
-1. `c2c unpair -w <workspace>` (revokes all tokens immediately).
-2. Optionally remove the connector on the same iab tab via
-   `https://chatgpt.com/plugins` (foreground + markHandoff). Only touch
-   this workspace's `connectorName`.
-3. Tell the user: "已断开 ChatGPT 对该项目的访问。"
-
-## Workflow: reconnect after address reclaim（全关掉以后地址失效）
-
-This is the normal case when the user quit Codex / the terminal / the machine:
-the previous public address is gone. Doctor already started a new one.
-`connectorAction: "update"` means Delete + create again — not Reconnect.
-
-`c2c doctor --json` will look like:
-`{ "chatgptRepair": { "needed": true, "connectorAction": "update", "connectorName": "...", "userMessage": "...", "mcpUrl": "...", "pairingCode": "...", "pages": { ... } } }`
-
-1. Tell the user exactly `chatgptRepair.userMessage`. Then you repair. Do not
-   ask them to click around ChatGPT unless a login wall appears. Do not open
-   the C2C chat and do not send `[C2C]` until this repair finishes and a
-   follow-up doctor is green. Never "try a message first to see if it works".
-2. Same one iab tab as setup (foreground + markHandoff). Settings URLs only
-   until Connected — never hunt menus:
-   - 开发人员模式: `https://chatgpt.com/#settings/Security`
-   - 插件总管（只用来 Delete）: `https://chatgpt.com/plugins`
-   - 加插件（Delete 之后必走）: `https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins`
-3. Operate ONLY on `chatgptRepair.connectorName`. Never touch another
-   workspace's connector.
-   - If that exact name exists on the plugins hub: **Delete** it. Confirm the
-     delete if ChatGPT asks. **Never click Reconnect, Refresh, Connect, or
-     Edit** on the old card — the old Server URL is dead and the page will
-     hang on "This site cannot be reached".
-   - Then `goto` the 加插件 URL and create that **same** `connectorName`
-     (do not invent a second name):
-      - Description: `Securely connect ChatGPT to the current Codex workspace for planning and review.`
-      - Server URL: `chatgptRepair.mcpUrl`
-      - Authentication: OAuth
-     Then Connect / Authorize and type `chatgptRepair.pairingCode`
-     (or `c2c pair --json` if it expired). Continue as soon as it is Connected —
-     do not wait for 8 tools on the settings page.
-   - If the name is already gone, skip Delete and only create.
-4. `c2c doctor --json` again. Same tab: `goto` the saved conversation
-   (`c2c session`) only after the Doctor gate is green. Do not start a new
-   audit/task chat just because the address changed.
-5. If the ChatGPT conversation was lost, follow Conversation management → Switch:
-   new chat, boot prompt, HANDOFF. No file re-uploading (the workspace lives in MCP).
-
-## Workflow: repair（anything looks broken）
-
-1. `c2c doctor -w <workspace> --json`. Doctor gate: do not open ChatGPT / send
-   `[C2C]` until local is green, except reconnect settings pages.
-2. If `namedRepair.needed`, tell the user `namedRepair.userMessage`, run
-   `c2c tunnel login --json`, then doctor again. Do not Delete the connector.
-3. If `chatgptRepair.needed`, follow **reconnect after address reclaim**, then
-   doctor again.
-4. Otherwise apply the recovery map. Only involve the user for login / 2FA /
-   CAPTCHA — one action.
-
-## Recovery map
-
-| Symptom | Action |
-| --- | --- |
-| Bridge not running | `c2c start` (doctor does this automatically) |
-| Tunnel dead / URL unreachable / 全关掉后连接失效 | `c2c doctor` → if `namedRepair.needed`, login to Cloudflare and doctor again (do not Delete). If `chatgptRepair.needed`, tell the user the message, then **Delete** THIS workspace's connector only (`connectorName`) and create it again. Never Reconnect. |
-| ChatGPT says tool call failed / 401 | token expired or revoked → re-pair (new pairing code + authorize) |
-| Pairing code rejected/expired | `c2c pair --json` for a fresh code |
-| Port conflict | handled automatically; never surface to the user |
-| Every new chat “repairs” / cannot write the log or settings directory | `c2c sandbox-allow --json` (once). Do not ask the user. |
-| cloudflared missing | install it yourself (brew/winget), then retry |
+用户要求断开时执行 `c2c unpair -w <ws>`，按需移除该 workspace 的连接器；不
+影响其他 workspace。最终报告本地验证、真实网页往返和后台唤醒各自的证据状态。

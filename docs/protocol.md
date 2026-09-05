@@ -1,5 +1,10 @@
 # C2C Agent Protocol
 
+For new desktop-led brainstorming/research/planning/review loops, use
+[planner-loop.md](planner-loop.md). The legacy text-message examples below
+remain compatible; the optional extension is a manually activated handoff,
+not an automatic browser feedback loop.
+
 Control plane: Computer Use (tiny structured messages typed into the ChatGPT UI).
 Data plane: MCP (ChatGPT pulls files, diffs, search results itself).
 

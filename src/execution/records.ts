@@ -226,6 +226,9 @@ export function completionEvidence(workspaceId: string, taskId: string, iteratio
     executionSucceeded: execution?.exitStatus === "ok",
     testsRecorded: Boolean(execution?.tests?.trim()),
     terminalCheckpoint: checkpoint?.state === "DONE",
+    noKnownIssues: checkpoint !== null && checkpoint.knownIssues.length === 0,
+    latestTaskIteration: selectedIteration !== undefined && log.records.every((record) => record.iteration <= selectedIteration),
+    reviewedAfterExecution: execution !== null && checkpoint !== null && log.records.indexOf(checkpoint) > log.records.indexOf(execution),
   };
   return { pass: Object.values(checks).every(Boolean), checks, selectedIteration: selectedIteration ?? null, integrity: log.integrity, execution, checkpoint };
 }
