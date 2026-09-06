@@ -36,9 +36,10 @@
 > 你负责规划与独立审查，本地 Codex 执行。继续原目标，不能扩大授权范围。
 > 本次 request 为上述 JSON。请读取已连接工作区的执行记录与当前差异，指出未完成项。
 > 只在目标的验收标准全部满足时建议 DONE，否则给具体 PLAN 或 BLOCKED。
-> 最终只返回单个 JSON（可用 json 围栏）：version=1，回显全部 request 字段，
+> 最终只返回一个 json 代码围栏，里面是合法 JSON：version=1，回显全部 request 字段，
 > state，summary，rationale[]，actions[]，tests[]，successCriteria[]，issues[]，
 > sources[{url,claim}]。actions 是自然语言修改建议，不是可直接执行的 shell。
+> 字符串内的引号与换行必须按 JSON 转义；测试案例也可用自然语言描述，避免嵌套引号。
 
 ```json
 {
@@ -67,6 +68,10 @@ node bin/c2c.js validate-reply --request request.json --reply reply.txt --json
 
 成功只产生 `authority: proposal-only`，不回显或执行网页 actions。返回 DONE 时
 下一步是 verify-local-evidence。失败 exit 2；网页内容不得拼入 shell/命令替换。
+格式失败时保留原回复和拒绝结果，不在本地替网页修复后冒充原始通过。确认上一轮
+已结束后，可用新 requestId 请求格式修正；仍绑定原 task、iteration、URL 和 mode，
+不增加执行轮次。修正请求同样记录发送与采纳检查点。优先读取代码块，避免普通
+Markdown 渲染改变转义字符；只有 AX 文本时注明提取方式，不能宣称是原始传输字节。
 研究报告不一定输出 JSON：读完完整报告后，用一个独立新 request 请普通对话整理
 成 RESEARCH JSON（保留来源），再发 PLAN。不能把两次请求混成同一回执。
 
