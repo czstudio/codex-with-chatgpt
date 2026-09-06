@@ -89,3 +89,23 @@ This conversation does not support developer MCPs。网页未取得 workspaceId/
 候选 Skill 据此补充：先核验插件是否挂载；明确对话能力限制不能靠 doctor 或
 重试修复；保留黑盒已通过与源码通道未通过的独立状态。上述连接器结果不影响
 先前无私有数据的真实双轮及 Deep Research 事实，但禁止据此宣称完整源码联动。
+
+## 本机更新完成
+
+实际激活提交：40c20ad1a707da9956dd38ef5b9af570434763d9。
+独立 release：/Users/cz/.local/share/codex-with-chatgpt/releases/40c20ad1a707。
+该发布副本 build、21 files / 184 tests、真实网页 DONE 的编译 CLI 校验均 PASS。
+依赖符号链接指向 release 外的数量为 0；已安装 Skill 不再指向可变开发工作树。
+
+更新器 dry-run 后执行 --apply，返回 updated；安装文件与 release 展开路径后的
+Skill 内容逐字一致，CLI smoke 通过。旧版备份逐字一致，目录 0700、文件 0600；
+回滚 dry-run 通过。实际备份入口保存在本机 .tooling/live-loop-20260906/activation.json，
+不把备份正文放进 Git。之前的隔离更新/真实回滚演练仍有效，本次未把活跃安装
+来回切换。当前会话不代表未来新任务已经加载新 Skill；下一次调用应读取安装文件。
+
+服务仍是 PID 67525 监听 127.0.0.1:62141。没有重启或迁移连接器、修改凭据/全局
+配置、更新扩展或触碰用户会话数据库；没有 push、merge 或远程生产部署。
+
+最终状态：本机 Skill 更新 PASS；真实双轮黑盒循环 PASS；实际 Deep Research 与
+研究转 PLAN PASS；源码级网页 MCP 当前会话 FORBIDDEN；后台反向唤醒 NOT VERIFIED。
+后两项不能由本地测试或前两项通过推导为完成。
