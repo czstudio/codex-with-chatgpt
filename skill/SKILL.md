@@ -48,7 +48,14 @@ CLI: `node __C2C_CHECKOUT__/bin/c2c.js`。工作区参数 `-w` 指向用户项�
 - 仅讨论公共目标、头脑风暴或公共资料研究时，可先运行不连接本地仓库的网页回合。
   不把仓库文件、diff、日志或秘密放进消息；代码审查必须先核验数据通道。
 - 本地数据通道使用现有 workspace connector。先 `c2c tunnel status -w <ws> --json`；
-  已有选择与配对不重复设置。需要代码访问时运行 `c2c doctor -w <ws> --json` 并
+  已有选择与配对不重复设置。若本地工具成功但网页报告工具未暴露，先在当前对话的
+  Add files and more 中键入插件名并选择已有 workspace 插件，核对 composer 中的
+  插件标识后，用新 requestId 做只读 workspace_info 探针；不要直接重启或重新配对。
+  已完成的不可用探针与挂载后的新探针分别记录，不能沿用旧结果冒充成功。
+  如果网页返回 conversation does not support developer MCPs，记录对话能力限制，
+  不反复调用 doctor，不以新建 Work 执行任务冒充修复原普通聊天。没有源码访问时
+  仅能做公开目标/黑盒反馈；源码审查保持未验证，不能用粘贴私有文件绕过。
+  需要代码访问且仍有连接故障时运行 `c2c doctor -w <ws> --json` 并
   检查 bridge 与 MCP 结果；`doctor` 会启动/修复服务，修改前确认目标范围。
   ChatGPT 内实际成功调用 workspace_info 且工作区吻合才算数据通道验证。
 - 首次建立公网连接/连接器按用户授权及当前工具确认规则执行；已有范围内维修
