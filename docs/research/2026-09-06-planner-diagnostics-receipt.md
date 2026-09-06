@@ -34,3 +34,17 @@
 这里验证的是诊断准确性、兼容性与读取边界。没有测量用户任务成功率、模型延迟
 或网页请求节省百分比，也没有重新启动已完成的网页任务。普通 Pro Chat 的 developer
 MCP 限制和后台反向唤醒未验证状态仍见 planner-loop-live-receipt，不因本次测试关闭。
+
+## 独立发布与本机激活
+
+发布提交 f1db1738776e；目录 /Users/cz/.local/share/codex-with-chatgpt/releases/f1db1738776e。
+发布副本编译及完整 22 files / 199 tests PASS，无指向外部的依赖符号链接；该副本
+CLI 对真实 DONE 和错轮拒绝的 smoke 均通过。dry-run 后原子激活返回 updated。
+
+切换后 Skill 内容与 release 展开路径后的源文件逐字一致；旧版备份逐字一致，
+目录 0700、文件 0600。再次 dry-run 返回 changes=false，回滚 dry-run 通过；
+激活后的 CLI 再次验证真实 DONE 通过。备份入口保存在本机
+.tooling/diagnostic-comparison/activation.json，旧发布目录保留。
+
+原服务 PID 67525 继续监听 127.0.0.1:62141，未重启服务、修改 connector/凭据、
+接触会话数据库、push、merge 或远程部署。本次没有增加网页请求。
