@@ -9,7 +9,7 @@ import { adminFetch, ensureBridge, stopBridge } from "../process/daemon.js";
 import { Workspace } from "../workspace/manager.js";
 import { AuthStore } from "../auth/store.js";
 import { appendCheckpointRecord, appendExecutionRecord, completionEvidence } from "../execution/records.js";
-import { parsePlannerJson, plannerRequestSchema, validatePlannerReply } from "../execution/planner-reply.js";
+import { checkPlannerReplyFiles } from "../execution/planner-check.js";
 import { detectTunnelBinaries } from "../tunnel/detect.js";
 import {
   chooseQuickTunnel,
@@ -1144,21 +1144,10 @@ program
   .requiredOption("--reply <file>", "single completed assistant reply")
   .option("--json", "machine-readable output", false)
   .action((opts: { request: string; reply: string; json: boolean }) => {
-    try {
-      for (const file of [opts.request, opts.reply]) {
-        if (!fs.statSync(file).isFile() || fs.statSync(file).size > 65536) throw new Error("INPUT_NOT_BOUNDED_FILE");
-      }
-      const expected = plannerRequestSchema.parse(parsePlannerJson(fs.readFileSync(opts.request, "utf8")));
-      const reply = validatePlannerReply(fs.readFileSync(opts.reply, "utf8"), expected);
-      // Do not echo untrusted reply text, test commands or file paths to the shell.
-      const result = { ok: true, authority: "proposal-only", state: reply.state,
-        taskId: reply.taskId, requestId: reply.requestId, iteration: reply.iteration,
-        next: reply.state === "DONE" ? "verify-local-evidence" : reply.state === "PLAN" ? "local-adoption-review" : reply.state === "BLOCKED" ? "resolve-blocker" : "request-plan" };
-      say(opts.json ? JSON.stringify(result) : `${reply.state}: ${result.next}`);
-    } catch {
-      say(opts.json ? JSON.stringify({ ok: false, error: "PLANNER_REPLY_REJECTED", next: "inspect-local-request-and-reply" }) : "Planner reply rejected; inspect local request and reply.");
-      process.exitCode = 2;
-    }
+    const result = checkPlannerReplyFiles(opts.request, opts.reply);
+    say(opts.json ? JSON.stringify(result) : result.ok ? `${result.state}: ${result.next}`
+      : `Planner reply rejected (${result.reason}): ${result.next}`);
+    if (!result.ok) process.exitCode = 2;
   });
 
 const tunnelCmd = program.command("tunnel").description("Choose or inspect the public connection for this workspace");

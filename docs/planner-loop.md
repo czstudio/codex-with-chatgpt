@@ -68,6 +68,21 @@ node bin/c2c.js validate-reply --request request.json --reply reply.txt --json
 
 成功只产生 `authority: proposal-only`，不回显或执行网页 actions。返回 DONE 时
 下一步是 verify-local-evidence。失败 exit 2；网页内容不得拼入 shell/命令替换。
+失败仍保留 `error: PLANNER_REPLY_REJECTED`，另返回固定枚举 `reason` 与 `next`，
+不输出解析器错误原文、网页正文、用户字段名或文件路径。常见恢复方向如下：
+
+| reason | next 的含义 |
+| --- | --- |
+| INVALID_REQUEST | 修正本地 request，不消耗网页回合 |
+| INPUT_UNREADABLE / INPUT_NOT_BOUNDED_FILE | 检查本地输入文件与大小 |
+| INVALID_REPLY_JSON / INVALID_REPLY_FENCE | 确认完整回复后请求格式修正 |
+| INVALID_REPLY_JSON_DUPLICATE_KEY / REPLY_MISMATCH_* | 核对含糊或串轮回复，不能直接重发 |
+| DONE_HAS_UNRESOLVED_WORK | 处理实际未完成项，不能靠改格式完成 |
+
+`next` 只是诊断提示，不授权执行或自动重发；发送与恢复仍按原检查点协议。
+文件读取检查同一个已打开的普通文件，最多读取 64 KiB 加一个超限检测字节；
+文件在大小检查后增长也不会产生无界读取。输入超过上限仍拒绝，不静默截断。
+
 格式失败时保留原回复和拒绝结果，不在本地替网页修复后冒充原始通过。确认上一轮
 已结束后，可用新 requestId 请求格式修正；仍绑定原 task、iteration、URL 和 mode，
 不增加执行轮次。修正请求同样记录发送与采纳检查点。优先读取代码块，避免普通

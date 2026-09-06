@@ -67,7 +67,10 @@ export function validatePlannerReply(raw: string, expected: PlannerRequest): Pla
     body = match[1];
   }
   let parsed: unknown;
-  try { parsed = parsePlannerJson(body); } catch { throw new Error("INVALID_REPLY_JSON"); }
+  try { parsed = parsePlannerJson(body); } catch (error) {
+    throw new Error(error instanceof Error && error.message === "DUPLICATE_JSON_KEY"
+      ? "INVALID_REPLY_JSON_DUPLICATE_KEY" : "INVALID_REPLY_JSON");
+  }
   const result = replySchema.safeParse(parsed);
   if (!result.success) throw new Error("INVALID_REPLY_SCHEMA");
   const reply = result.data;
