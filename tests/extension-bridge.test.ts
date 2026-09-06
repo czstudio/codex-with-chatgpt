@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
+import express from "express";
 import { startExtensionBridge, type ExtensionBridge } from "../src/extension/bridge.js";
 import { EXTENSION_BRIDGE_PORT } from "../src/config/paths.js";
 import { formatTaskBlock, parseTaskBlock } from "../src/extension/task-block.js";
@@ -10,6 +11,9 @@ import { isolateStateDir, makeGitRepo, makeTmpDir, cleanup } from "./helpers.js"
 
 describe("localhost extension bridge", () => {
   let root: string;
+  let testPort = 0;
+  const realListen = express.application.listen;
+  let listener: ReturnType<typeof vi.spyOn>;
   let bridge: ExtensionBridge | undefined;
   const approved = {
     taskSummary: "Repair the local task handoff",
@@ -17,6 +21,14 @@ describe("localhost extension bridge", () => {
   };
 
   beforeEach(() => {
+    // Exercise real HTTP middleware without binding or stopping the user's service.
+    // The production listener must still request its fixed port. Only the test
+    // transport maps that request to an OS-assigned private test port.
+    testPort = 0;
+    listener = vi.spyOn(express.application, "listen").mockImplementation(function (this: express.Application, ...args: unknown[]) {
+      expect(args[0]).toBe(EXTENSION_BRIDGE_PORT);
+      return Reflect.apply(realListen, this, [testPort, ...args.slice(1)]);
+    });
     isolateStateDir();
     root = makeTmpDir("extension-ws");
     makeGitRepo(root);
@@ -26,6 +38,7 @@ describe("localhost extension bridge", () => {
     await bridge?.close();
     cleanup(root);
     bridge = undefined;
+    listener.mockRestore();
   });
 
   async function armedBlock(): Promise<{ block: string; workspaceId: string }> {
@@ -233,8 +246,11 @@ describe("localhost extension bridge", () => {
     await new Promise<void>((resolve, reject) => {
       occupied.once("listening", () => resolve());
       occupied.once("error", reject);
-      occupied.listen(EXTENSION_BRIDGE_PORT, "127.0.0.1");
+      occupied.listen(0, "127.0.0.1");
     });
+    const address = occupied.address();
+    if (!address || typeof address === "string") throw new Error("test port unavailable");
+    testPort = address.port;
     try {
       await expect(startExtensionBridge({ workspaceRoot: root, persistRuntime: false })).rejects.toMatchObject({ code: "EADDRINUSE" });
     } finally {

@@ -5,6 +5,13 @@ REPO_URL="${C2C_REPO_URL:-https://github.com/czstudio/codex-with-chatgpt-pro.git
 C2C_CHECKOUT="${C2C_INSTALL_DIR:-$HOME/.local/share/codex-with-chatgpt}"
 SKILL_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}/codex-with-chatgpt"
 
+# This entrypoint is for first installation. Updating in place would rebuild
+# code already referenced by active tasks before the new Skill is validated.
+if [ -e "$SKILL_DIR/SKILL.md" ] || [ -L "$SKILL_DIR/SKILL.md" ] || [ -e "$C2C_CHECKOUT" ]; then
+  echo "Existing installation or checkout: prepare a separate tested release and use scripts/update-skill.mjs. Nothing was changed." >&2
+  exit 2
+fi
+
 need() { command -v "$1" >/dev/null 2>&1; }
 
 if ! need git || ! need node; then

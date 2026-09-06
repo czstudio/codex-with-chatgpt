@@ -51,4 +51,17 @@ describe("planner loop reply boundary", () => {
     expect(() => validatePlannerReply(JSON.stringify({ ...reply, state: "BLOCKED" }), request)).toThrow("BLOCKER_REQUIRED");
     expect(validatePlannerReply(JSON.stringify({ ...reply, state: "BLOCKED", issues: ["Login required"] }), request).state).toBe("BLOCKED");
   });
+  it("accepts complete CRLF fenced replies without a corrective web round", () => {
+    expect(validatePlannerReply("```json\r\n" + JSON.stringify(reply, null, 2).replace(/\n/g, "\r\n") + "\r\n```", request).state).toBe("PLAN");
+  });
+  it("rejects duplicate bindings, escaped duplicate keys and nested duplicate claims", () => {
+    const raw = JSON.stringify(reply);
+    expect(() => validatePlannerReply(raw.replace('"requestId":"request-2"', '"requestId":"old","requestId":"request-2"'), request)).toThrow("INVALID_REPLY_JSON");
+    expect(() => validatePlannerReply(raw.replace('"requestId":"request-2"', '"requestId":"old","request\\u0049d":"request-2"'), request)).toThrow("INVALID_REPLY_JSON");
+    expect(() => validatePlannerReply(raw.replace('"sources":[]', '"sources":[{"url":"https://example.com","claim":"first","claim":"second"}]'), request)).toThrow("INVALID_REPLY_JSON");
+  });
+  it("does not mistake JSON-looking text inside a summary for duplicate fields", () => {
+    expect(validatePlannerReply(JSON.stringify({ ...reply, summary: 'Discuss {"key": "first", "key": "second"} as text' }), request).state).toBe("PLAN");
+  });
+
 });

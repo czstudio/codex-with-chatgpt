@@ -9,7 +9,7 @@ import { adminFetch, ensureBridge, stopBridge } from "../process/daemon.js";
 import { Workspace } from "../workspace/manager.js";
 import { AuthStore } from "../auth/store.js";
 import { appendCheckpointRecord, appendExecutionRecord, completionEvidence } from "../execution/records.js";
-import { plannerRequestSchema, validatePlannerReply } from "../execution/planner-reply.js";
+import { parsePlannerJson, plannerRequestSchema, validatePlannerReply } from "../execution/planner-reply.js";
 import { detectTunnelBinaries } from "../tunnel/detect.js";
 import {
   chooseQuickTunnel,
@@ -1148,7 +1148,7 @@ program
       for (const file of [opts.request, opts.reply]) {
         if (!fs.statSync(file).isFile() || fs.statSync(file).size > 65536) throw new Error("INPUT_NOT_BOUNDED_FILE");
       }
-      const expected = plannerRequestSchema.parse(JSON.parse(fs.readFileSync(opts.request, "utf8")));
+      const expected = plannerRequestSchema.parse(parsePlannerJson(fs.readFileSync(opts.request, "utf8")));
       const reply = validatePlannerReply(fs.readFileSync(opts.reply, "utf8"), expected);
       // Do not echo untrusted reply text, test commands or file paths to the shell.
       const result = { ok: true, authority: "proposal-only", state: reply.state,

@@ -112,5 +112,11 @@ heartbeat 只负责重新进入检查流程，不能宣称它已唤醒网页。�
 服务启动路径、重启生产 connector、覆盖别人 dirty tree 或清理历史数据。
 未 build 时用现有 package manager 和 lockfile，避免依赖全局 corepack 必然存在。
 
+现有安装升级前读取 `__C2C_CHECKOUT__/docs/safe-skill-update.md`。测试中的源码
+不能直接 build 到已安装 Skill 指向的 dist；用候选输出目录。先做新旧行为对比，
+将验收过的版本放到独立 release 目录，再用 `scripts/update-skill.mjs` 默认 dry-run
+核对，最后 `--apply` 原子替换 Skill；回滚必须匹配本次安装内容，不能覆盖别人
+后续修改。首次安装脚本遇到已有安装会停止，不能用它做原地升级。
+
 用户要求断开时执行 `c2c unpair -w <ws>`，按需移除该 workspace 的连接器；不
 影响其他 workspace。最终报告本地验证、真实网页往返和后台唤醒各自的证据状态。

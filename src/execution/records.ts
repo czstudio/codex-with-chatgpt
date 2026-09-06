@@ -128,7 +128,10 @@ function recordIdentity(record: AuditRecord): string {
 
 function comparable(record: AuditRecord): string {
   const { timestamp: _timestamp, ...stable } = record;
-  return JSON.stringify(stable);
+  // Recovery may reconstruct the same record with a different property order.
+  // Preserve ordered evidence/file arrays, but do not turn object key order into
+  // a false conflict that blocks an otherwise identical replay.
+  return JSON.stringify(Object.fromEntries(Object.entries(stable).sort(([a], [b]) => a.localeCompare(b))));
 }
 
 export function appendAuditRecord(workspaceId: string, record: AuditRecord): void {
@@ -157,7 +160,10 @@ export function readAuditLog(workspaceId: string, taskId?: string): AuditLog {
   if (!fs.existsSync(file)) return { records: [], integrity: { ok: true, totalLines: 0, corruptLines: [], errors: [], bounded: true } };
   const stat = fs.statSync(file);
   const errors: string[] = [];
-  if (stat.size > MAX_AUDIT_BYTES) errors.push(`audit log exceeds ${MAX_AUDIT_BYTES} bytes`);
+  if (stat.size > MAX_AUDIT_BYTES) return {
+    records: [],
+    integrity: { ok: false, totalLines: 0, corruptLines: [], errors: [`audit log exceeds ${MAX_AUDIT_BYTES} bytes; not read`], bounded: false },
+  };
   const text = fs.readFileSync(file, "utf8");
   const lines = text.split("\n").filter(Boolean);
   if (lines.length > MAX_AUDIT_LINES) errors.push(`audit log exceeds ${MAX_AUDIT_LINES} lines`);

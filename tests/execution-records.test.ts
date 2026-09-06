@@ -165,4 +165,21 @@ describe("task-bound execution audit", () => {
     expect(readAuditLog("ws-race").integrity.ok).toBe(false);
     expect(completionEvidence("ws-race", "task-a", 1).pass).toBe(false);
   });
+  it("accepts semantically identical replay after key reordering", () => {
+    const record = { taskId: "recovery", iteration: 1, changedFiles: ["a.ts"], tests: "1 passed", exitStatus: "ok", timestamp: "2026-09-05T00:00:00Z" };
+    appendExecutionRecord("ws-order", record);
+    const reordered = Object.fromEntries(Object.entries(record).reverse()) as typeof record;
+    expect(() => appendExecutionRecord("ws-order", reordered)).not.toThrow();
+    expect(readAuditRecords("ws-order")).toHaveLength(1);
+  });
+  it("bounds oversized audit recovery before loading its body", () => {
+    const file = path.join(process.env.C2C_STATE_DIR!, "executions", "ws-large.jsonl");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "x".repeat(2 * 1024 * 1024 + 1));
+    const log = readAuditLog("ws-large");
+    expect(log.records).toHaveLength(0);
+    expect(log.integrity).toMatchObject({ ok: false, bounded: false, totalLines: 0 });
+    expect(log.integrity.errors[0]).toContain("not read");
+  });
+
 });

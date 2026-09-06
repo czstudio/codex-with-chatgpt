@@ -34,18 +34,40 @@ const replySchema = z.object({
 
 export type PlannerReply = z.infer<typeof replySchema>;
 
+// JSON.parse silently uses the last duplicate key. Reject such replies so the
+// visible binding and the parsed binding cannot disagree (including escaped keys).
+export function parsePlannerJson(body: string): unknown {
+  if (Buffer.byteLength(body, "utf8") > 64 * 1024) throw new Error("REPLY_TOO_LARGE");
+  const parsed: unknown = JSON.parse(body);
+  const tokens = body.match(/"(?:\\.|[^"\\])*"|[{}\[\]:,]|-?\d+(?:\.\d+)?(?:[Ee][+-]?\d+)?|true|false|null/g) ?? [];
+  const stack: Array<Set<string> | null> = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === "{") stack.push(new Set());
+    else if (token === "[") stack.push(null);
+    else if (token === "}" || token === "]") stack.pop();
+    else if (token.startsWith('"') && tokens[i + 1] === ":") {
+      const key: string = JSON.parse(token);
+      const keys = stack.at(-1);
+      if (!keys || keys.has(key)) throw new Error("DUPLICATE_JSON_KEY");
+      keys.add(key);
+    }
+  }
+  return parsed;
+}
+
 /** A syntax/correlation check, never permission to execute web-provided actions. */
 export function validatePlannerReply(raw: string, expected: PlannerRequest): PlannerReply {
   const request = plannerRequestSchema.parse(expected);
   if (Buffer.byteLength(raw, "utf8") > 64 * 1024) throw new Error("REPLY_TOO_LARGE");
-  let body = raw.trim();
+  let body = raw.replace(/\r\n/g, "\n").trim();
   if (body.startsWith("```")) {
     const match = /^```(?:json|c2c-reply)\n([\s\S]*?)\n```$/.exec(body);
     if (!match) throw new Error("INVALID_REPLY_FENCE");
     body = match[1];
   }
   let parsed: unknown;
-  try { parsed = JSON.parse(body); } catch { throw new Error("INVALID_REPLY_JSON"); }
+  try { parsed = parsePlannerJson(body); } catch { throw new Error("INVALID_REPLY_JSON"); }
   const result = replySchema.safeParse(parsed);
   if (!result.success) throw new Error("INVALID_REPLY_SCHEMA");
   const reply = result.data;

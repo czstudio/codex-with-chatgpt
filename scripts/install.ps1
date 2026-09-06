@@ -5,6 +5,11 @@ $Checkout = if ($env:C2C_INSTALL_DIR) { $env:C2C_INSTALL_DIR } else { Join-Path 
 $SkillsRoot = if ($env:CODEX_SKILLS_DIR) { $env:CODEX_SKILLS_DIR } else { Join-Path $env:USERPROFILE ".codex\skills" }
 $SkillDir = Join-Path $SkillsRoot "codex-with-chatgpt"
 
+# First installation only: never rebuild the release referenced by active tasks.
+if ((Test-Path (Join-Path $SkillDir "SKILL.md")) -or (Test-Path $Checkout)) {
+  throw "Existing installation or checkout: prepare a separate tested release and use scripts/update-skill.mjs. Nothing was changed."
+}
+
 function Refresh-Path {
   $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
   $user = [Environment]::GetEnvironmentVariable("Path", "User")
