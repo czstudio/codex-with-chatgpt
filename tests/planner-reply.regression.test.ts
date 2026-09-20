@@ -136,7 +136,7 @@ describe('planner-reply live-incident regressions', () => {
     }
   });
 
-  it('10. requestId correlation is the caller’s duty (audit-conflict characterization)', () => {
+  it('10. characterization ONLY: parser does NOT enforce cross-round correlation (NOT_ESTABLISHED — caller guarantee, tracked for A01 owner)', () => {
     // Two receipts sharing taskId+iteration but carrying different requestIds
     // BOTH validate. The module intentionally does not dedupe rounds — callers
     // that correlate execution summaries on taskId+iteration alone will conflate
@@ -149,5 +149,111 @@ describe('planner-reply live-incident regressions', () => {
     );
     expect(a.requestId).toBe('gpt6loop-transport-opt-20260920');
     expect(b.requestId).toBe('gpt6loop-transport-opt-20260920-r2');
+  });
+});
+
+describe('planner-reply boundary precision (A00-R3)', () => {
+  const base = {
+    version: 1,
+    taskId: 'gpt6loop_transport_20260920',
+    requestId: 'gpt6loop-transport-opt-20260920',
+    iteration: 3,
+    conversationUrl: CONV,
+    mode: 'brainstorm',
+    state: 'IDEAS',
+    rationale: ['r'],
+    actions: ['a'],
+    tests: ['t'],
+    successCriteria: ['sc'],
+    issues: [],
+    sources: [{ url: 'https://example.com/e', claim: 'c' }],
+  };
+
+  it('2000 chars exactly is accepted; 2001 rejected (units: JS string chars)', () => {
+    const ok = JSON.stringify({ ...base, summary: 's'.repeat(2000) });
+    expect(validate(request(), ok).state).toBe('IDEAS');
+    const bad = JSON.stringify({ ...base, summary: 's'.repeat(2001) });
+    expect(() => validate(request(), bad)).toThrowError(/INVALID_REPLY_SCHEMA|Invalid URL|2000/);
+  });
+
+  it('mismatch varies one field at a time from the legal baseline', () => {
+    for (const [field, wrong] of [
+      ['iteration', 4],
+      ['mode', 'review'],
+    ] as const) {
+      expect(() => validate(request(), reply(brainstormReply, { [field]: wrong })))
+        .toThrowError(`REPLY_MISMATCH_${field}`);
+    }
+  });
+
+  it('url family: https accepted; relative, http, and pseudo-https-prefix rejected', () => {
+    const withUrl = (u: string) => {
+      const rep = JSON.parse(JSON.stringify(brainstormReply));
+      rep.sources = [{ url: u, claim: 'c' }];
+      return JSON.stringify(rep);
+    };
+    expect(validate(request(), withUrl('https://example.com/a')).state).toBe('IDEAS');
+    // https-only scheme enforced. WHATWG leniency: 'https:/example.com/a'
+    // (single slash) NORMALIZES to a valid URL and is accepted — pinned as
+    // actual semantics so the divergence is explicit.
+    expect(validate(request(), withUrl('https:/example.com/a')).state).toBe('IDEAS');
+    for (const bad of ['AGENTS.md', 'http://example.com/a']) {
+      expect(() => validate(request(), withUrl(bad))).toThrowError();
+    }
+  });
+
+  it('two contradictory complete blocks are not an acceptance (fence anchors)', () => {
+    const one = '```json\n' + JSON.stringify(brainstormReply) + '\n```';
+    const two = '```json\n' + JSON.stringify(brainstormReply) + '\n```';
+    // This ref fails the body as invalid JSON (parse order differs from the
+    // installed dist's fence-first check); both reject the double block.
+    expect(() => validate(request(), one + '\n' + two)).toThrowError(/INVALID_REPLY_FENCE|INVALID_REPLY_JSON/);
+  });
+
+  it('old legal block followed by a truncated new block is rejected', () => {
+    const good = '```json\n' + JSON.stringify(brainstormReply) + '\n```';
+    expect(() => validate(request(), good + '\n```json\n{"version":1,"state":"')).toThrowError('INVALID_REPLY_FENCE');
+  });
+
+  it('64KiB limit units are utf-8 bytes; over-limit rejected with all per-field caps respected', () => {
+    // 30 rationale x <=2000 chars stays inside every single-field cap while the
+    // total crosses 65536 utf-8 bytes -> REPLY_TOO_LARGE (not INVALID_REPLY_SCHEMA).
+    const rep = JSON.parse(JSON.stringify(base));
+    rep.rationale = Array.from({ length: 30 }, (_, i) => `项${i} ` + 'x'.repeat(1990));
+    rep.summary = 'summary-pad ' + 'y'.repeat(2000);
+    rep.sources = Array.from({ length: 30 }, (_, i) => ({
+      url: `https://example.com/e${i}`,
+      claim: 'c'.repeat(1500),
+    }));
+    const raw = JSON.stringify(rep);
+    expect(Buffer.byteLength(raw, 'utf8')).toBeGreaterThan(64 * 1024);
+    expect(() => validate(request(), raw)).toThrowError('REPLY_TOO_LARGE');
+  });
+});
+
+describe('planner-reply incident-family fixtures (A00-R2)', () => {
+  it('old iteration reused with a different requestId still validates per-request (correlation stays caller-side)', () => {
+    const oldRoundReq = request({ requestId: 'gpt6loop-transport-opt-20260920' });
+    const newRoundReq = request({ requestId: 'gpt6loop-transport-opt-20260920-r2', iteration: 3 });
+    expect(validate(oldRoundReq, reply(brainstormReply, {})).requestId).toBe('gpt6loop-transport-opt-20260920');
+    expect(validate(newRoundReq, reply(brainstormReply, { requestId: 'gpt6loop-transport-opt-20260920-r2' })).requestId)
+      .toBe('gpt6loop-transport-opt-20260920-r2');
+  });
+
+  it('same request replayed twice validates identically (parser has no round state)', () => {
+    const raw = reply(brainstormReply, {});
+    expect(validate(request(), raw).state).toBe(validate(request(), raw).state);
+  });
+
+  it('same requestId with conflicting content still parses both (content conflict detection NOT_ESTABLISHED)', () => {
+    const one = validate(request(), reply(brainstormReply, {}));
+    const two = validate(request(), reply(brainstormReply, { summary: 'contradictory content' }));
+    expect(one.summary).not.toBe(two.summary);
+    // Caller must hash payloads (A01/A02 envelope) to detect this.
+  });
+
+  it('a single legal fenced block is accepted', () => {
+    const fenced = '```json\n' + JSON.stringify(brainstormReply) + '\n```';
+    expect(validate(request(), fenced).state).toBe('IDEAS');
   });
 });
