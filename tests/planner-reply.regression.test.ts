@@ -136,7 +136,7 @@ describe('planner-reply live-incident regressions', () => {
     }
   });
 
-  it('10. characterization ONLY: parser does NOT enforce cross-round correlation (NOT_ESTABLISHED — caller guarantee, tracked for A01 owner)', () => {
+  it('10. characterization: five-field match is per-request only — cross-round correlation, same-id payload conflict, and consumption idempotence are NOT_ESTABLISHED here (caller guarantees: A01/A02 owners)', () => {
     // Two receipts sharing taskId+iteration but carrying different requestIds
     // BOTH validate. The module intentionally does not dedupe rounds — callers
     // that correlate execution summaries on taskId+iteration alone will conflate
@@ -186,7 +186,7 @@ describe('planner-reply boundary precision (A00-R3)', () => {
     }
   });
 
-  it('url family: https accepted; relative, http, and pseudo-https-prefix rejected', () => {
+  it('url family: https and WHATWG-normalized single-slash accepted; relative and http rejected', () => {
     const withUrl = (u: string) => {
       const rep = JSON.parse(JSON.stringify(brainstormReply));
       rep.sources = [{ url: u, claim: 'c' }];
@@ -202,12 +202,17 @@ describe('planner-reply boundary precision (A00-R3)', () => {
     }
   });
 
-  it('two contradictory complete blocks are not an acceptance (fence anchors)', () => {
-    const one = '```json\n' + JSON.stringify(brainstormReply) + '\n```';
-    const two = '```json\n' + JSON.stringify(brainstormReply) + '\n```';
-    // This ref fails the body as invalid JSON (parse order differs from the
-    // installed dist's fence-first check); both reject the double block.
-    expect(() => validate(request(), one + '\n' + two)).toThrowError(/INVALID_REPLY_FENCE|INVALID_REPLY_JSON/);
+  it('two contradictory complete blocks are rejected regardless of order', () => {
+    const blockA = '```json\n' + JSON.stringify(brainstormReply) + '\n```';
+    const blockB = '```json\n' + JSON.stringify({ ...brainstormReply, requestId: 'gpt6loop-transport-opt-20260920-r2' }) + '\n```';
+    // Each block individually validates against its own request...
+    expect(validate(request(), blockA).state).toBe('IDEAS');
+    expect(validate(request({ requestId: 'gpt6loop-transport-opt-20260920-r2' }), blockB).state).toBe('IDEAS');
+    // ...but combined they are one acceptance attempt and must fail (this ref
+    // fails the body as invalid JSON; the installed dist yields
+    // INVALID_REPLY_FENCE — both reject, neither picks a winner block).
+    expect(() => validate(request(), blockA + '\n' + blockB)).toThrowError(/INVALID_REPLY_FENCE|INVALID_REPLY_JSON/);
+    expect(() => validate(request(), blockB + '\n' + blockA)).toThrowError(/INVALID_REPLY_FENCE|INVALID_REPLY_JSON/);
   });
 
   it('old legal block followed by a truncated new block is rejected', () => {
@@ -215,19 +220,26 @@ describe('planner-reply boundary precision (A00-R3)', () => {
     expect(() => validate(request(), good + '\n```json\n{"version":1,"state":"')).toThrowError('INVALID_REPLY_FENCE');
   });
 
-  it('64KiB limit units are utf-8 bytes; over-limit rejected with all per-field caps respected', () => {
-    // 30 rationale x <=2000 chars stays inside every single-field cap while the
-    // total crosses 65536 utf-8 bytes -> REPLY_TOO_LARGE (not INVALID_REPLY_SCHEMA).
-    const rep = JSON.parse(JSON.stringify(base));
-    rep.rationale = Array.from({ length: 30 }, (_, i) => `项${i} ` + 'x'.repeat(1990));
-    rep.summary = 'summary-pad ' + 'y'.repeat(2000);
-    rep.sources = Array.from({ length: 30 }, (_, i) => ({
-      url: `https://example.com/e${i}`,
-      claim: 'c'.repeat(1500),
-    }));
-    const raw = JSON.stringify(rep);
-    expect(Buffer.byteLength(raw, 'utf8')).toBeGreaterThan(64 * 1024);
-    expect(() => validate(request(), raw)).toThrowError('REPLY_TOO_LARGE');
+  it('64KiB limit units are utf-8 BYTES, not chars: CJK payload crosses the byte limit while the char count stays legal', () => {
+    // Every per-field cap respected (rationale 30x<=2000 chars). CJK: raw.length
+    // (utf-16 units) stays <=65536 while utf-8 bytes blow past 65536 -> the
+    // byte limit fires (REPLY_TOO_LARGE). ASCII twin with the same char count
+    // stays under -> validates. Proves the unit is utf-8 BYTES.
+    const cjk = JSON.parse(JSON.stringify(base));
+    cjk.summary = 's';
+    cjk.rationale = Array.from({ length: 30 }, (_, i) => `项${i} ` + '测'.repeat(1985));
+    const cjkRaw = JSON.stringify(cjk);
+    expect(cjkRaw.length).toBeLessThanOrEqual(65536);
+    expect(Buffer.byteLength(cjkRaw, 'utf8')).toBeGreaterThan(64 * 1024);
+    expect(() => validate(request(), cjkRaw)).toThrowError('REPLY_TOO_LARGE');
+
+    const ascii = JSON.parse(JSON.stringify(base));
+    ascii.summary = 's';
+    ascii.rationale = Array.from({ length: 30 }, (_, i) => `r${i} ` + 'x'.repeat(1985));
+    const asciiRaw = JSON.stringify(ascii);
+    expect(asciiRaw.length).toBeLessThanOrEqual(65536);
+    expect(Buffer.byteLength(asciiRaw, 'utf8')).toBeLessThanOrEqual(64 * 1024);
+    expect(validate(request(), asciiRaw).state).toBe('IDEAS');
   });
 });
 
@@ -240,9 +252,9 @@ describe('planner-reply incident-family fixtures (A00-R2)', () => {
       .toBe('gpt6loop-transport-opt-20260920-r2');
   });
 
-  it('same request replayed twice validates identically (parser has no round state)', () => {
+  it('same request replayed twice yields deep-equal results (stateless parse)', () => {
     const raw = reply(brainstormReply, {});
-    expect(validate(request(), raw).state).toBe(validate(request(), raw).state);
+    expect(validate(request(), raw)).toEqual(validate(request(), raw));
   });
 
   it('same requestId with conflicting content still parses both (content conflict detection NOT_ESTABLISHED)', () => {
